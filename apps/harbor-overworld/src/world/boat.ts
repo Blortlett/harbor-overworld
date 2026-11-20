@@ -9,15 +9,11 @@ import {
   MIN_Z,
   WATER,
 } from './terrain';
+import { type Vehicle, VEHICLE_BERTHS } from './vehicles';
 import './boat.css';
 
 export type BoatPose = { x: number; z: number; yaw: number };
 
-const BOAT_BERTH: BoatPose = {
-  x: 13.5,
-  z: DOCK.z + DOCK.halfWidth + 1.3,
-  yaw: Math.PI / 2,
-};
 const DECK_HEIGHT = WATER + 0.29;
 const BOARDING_RANGE = 2.6;
 const HULL_HALF_WIDTH = 0.72;
@@ -139,9 +135,11 @@ export function bindBoat(
   game.append(panel);
 
   const { view } = player;
-  let pose = { ...BOAT_BERTH };
+  let pose: BoatPose = { ...VEHICLE_BERTHS.boat };
   let speed = 0;
   let aboard = false;
+  let occupied = false;
+  let boardingView: typeof view | undefined;
 
   function canBoard() {
     return (
@@ -152,6 +150,7 @@ export function bindBoat(
 
   function reset() {
     aboard = false;
+    boardingView = undefined;
     speed = 0;
   }
 
@@ -191,6 +190,14 @@ export function bindBoat(
   }
 
   return {
+    follow(vehicle: Vehicle | undefined) {
+      occupied = vehicle?.driver !== undefined;
+      if (occupied && aboard && boardingView) {
+        player.reset(boardingView);
+        reset();
+      }
+      if (vehicle && !aboard) pose = vehicle.pose;
+    },
     get pose() {
       return pose;
     },
@@ -198,13 +205,14 @@ export function bindBoat(
       return aboard;
     },
     get available() {
-      return canUse() && (aboard || canBoard());
+      return !occupied && canUse() && (aboard || canBoard());
     },
     reset,
     toggle() {
-      if (!canUse()) return false;
+      if (occupied || !canUse()) return false;
       if (aboard) return leave();
       if (!canBoard()) return false;
+      boardingView = { ...view };
       aboard = true;
       syncView(pose.yaw);
       return true;
@@ -215,7 +223,7 @@ export function bindBoat(
         | { forward: number; sideways: number; turn: number; look: number }
         | undefined,
     ) {
-      panel.hidden = !(canUse() && (aboard || canBoard()));
+      panel.hidden = !(!occupied && canUse() && (aboard || canBoard()));
       hint.hidden = !aboard;
       const actionLabel = aboard ? 'Leave boat' : 'Board boat';
       if (label.textContent !== actionLabel) label.textContent = actionLabel;

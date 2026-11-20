@@ -94,7 +94,7 @@ export const controlCommands = {
   boat: command('Board or disembark from the boat.'),
   plane: command('Board the seaplane, or leave it after landing and slowing.'),
   'plane-pitch': command(
-    'Hold the seaplane pitch. Positive climbs, negative descends, and zero levels.',
+    'Hold the seaplane yoke. Positive pitches up, negative pitches down, and zero releases it.',
     axis('pitch', -1, 1),
   ),
   page: command('Turn the focused noticeboard page.', direction),

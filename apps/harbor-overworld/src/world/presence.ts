@@ -4,6 +4,7 @@ import {
   displayName,
   HIT_LINES,
   isPose,
+  isVehiclePose,
   isShotPath,
   isPlacedPost,
   parseMessage,
@@ -22,9 +23,24 @@ import {
   type Shoot,
   type ShotPath,
 } from './presence-protocol';
+import type { PlanePose } from './flight';
+import {
+  VEHICLE_KINDS,
+  type Vehicle,
+  type VehicleKind,
+  type VehicleReport,
+} from './vehicles';
 
 export type Avatar = NamedPose & { id: number; walking: boolean; king?: true };
-export type LocalCrown = { location: CrownLocation } | { expiresAt: number };
+export type LocalCrown =
+  | { location: CrownLocation }
+  | { expiresAt: number; holderName?: string };
+
+type VehicleTrack = {
+  from: PlanePose;
+  to: Vehicle;
+  receivedAt: number;
+};
 
 type Track = {
   from: Pose;
@@ -37,19 +53,38 @@ type Track = {
   kingScale?: KingScale;
 };
 
-function interpolate(track: Track, now: number): Pose {
-  const t = Math.min(
-    1,
-    Math.max(0, (now - track.receivedAt) / PRESENCE_INTERVAL),
-  );
-  const { from, to } = track;
-  const delta = to.yaw - from.yaw;
-  const turn = Math.atan2(Math.sin(delta), Math.cos(delta));
+function interpolationProgress(receivedAt: number, now: number) {
+  return Math.min(1, Math.max(0, (now - receivedAt) / PRESENCE_INTERVAL));
+}
+
+function interpolateAngle(first: number, last: number, t: number) {
+  return first + Math.atan2(Math.sin(last - first), Math.cos(last - first)) * t;
+}
+
+function interpolate<T extends Pose>(
+  { from, to, receivedAt }: { from: T; to: T; receivedAt: number },
+  now: number,
+) {
+  const t = interpolationProgress(receivedAt, now);
   return {
     x: from.x + (to.x - from.x) * t,
     y: from.y + (to.y - from.y) * t,
     z: from.z + (to.z - from.z) * t,
-    yaw: from.yaw + turn * t,
+    yaw: interpolateAngle(from.yaw, to.yaw, t),
+  };
+}
+
+function interpolateVehicle(
+  { from, to, receivedAt }: VehicleTrack,
+  now: number,
+) {
+  return {
+    ...interpolate({ from, to: to.pose, receivedAt }, now),
+    pitch: interpolateAngle(
+      from.pitch,
+      to.pose.pitch,
+      interpolationProgress(receivedAt, now),
+    ),
   };
 }
 
@@ -66,8 +101,33 @@ function isSlot(value: unknown): value is number {
   );
 }
 
+const SESSION_KEY = 'harbor-overworld.presence-session';
+
+function tabSession() {
+  const fresh = Array.from(
+    crypto.getRandomValues(new Uint8Array(16)),
+    (value) => value.toString(16).padStart(2, '0'),
+  ).join('');
+  try {
+    const navigation = performance.getEntriesByType('navigation')[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    // A reload can replace its old socket, while another tab joins separately.
+    const previous =
+      navigation?.type === 'reload'
+        ? sessionStorage.getItem(SESSION_KEY)
+        : null;
+    const session =
+      previous && /^[a-f0-9]{32}$/.test(previous) ? previous : fresh;
+    sessionStorage.setItem(SESSION_KEY, session);
+    return session;
+  } catch {
+    return fresh;
+  }
+}
+
 export function createPresence(
-  readPose: () => NamedPose,
+  readPose: () => NamedPose & { vehicle?: VehicleReport },
   onJoin: (slot: number) => void,
   onStatus: (label: string, solo: boolean) => void,
   onPlots: (snapshot: PlotSnapshot) => void,
@@ -76,11 +136,9 @@ export function createPresence(
   onGunshot: (path: ShotPath, ownShot: boolean, line?: number) => void,
   onRespawn: (slot: number) => void,
 ) {
-  const session = Array.from(
-    crypto.getRandomValues(new Uint8Array(16)),
-    (value) => value.toString(16).padStart(2, '0'),
-  ).join('');
+  const session = tabSession();
   const tracks = new Map<number, Track>();
+  const vehicleTracks = new Map<VehicleKind, VehicleTrack>();
   let socket: WebSocket | undefined;
   let sendTimer = 0;
   let reconnectTimer = 0;
@@ -103,7 +161,7 @@ export function createPresence(
       connection.bufferedAmount > 1024
     )
       return;
-    const { x, y, z, yaw, name, chat, kingScale } = readPose();
+    const { x, y, z, yaw, name, chat, kingScale, vehicle } = readPose();
     connection.send(
       JSON.stringify({
         x,
@@ -112,6 +170,7 @@ export function createPresence(
         name,
         chat,
         kingScale,
+        vehicle,
         spawnRevision,
         yaw: Math.atan2(Math.sin(yaw), Math.cos(yaw)),
       }),
@@ -252,6 +311,38 @@ export function createPresence(
       )
         return;
       const now = performance.now();
+      if (
+        'vehicles' in message &&
+        message.vehicles &&
+        typeof message.vehicles === 'object'
+      ) {
+        const vehicles = message.vehicles as Partial<
+          Record<VehicleKind, unknown>
+        >;
+        for (const kind of VEHICLE_KINDS) {
+          const value = vehicles[kind];
+          if (
+            !value ||
+            typeof value !== 'object' ||
+            !('pose' in value) ||
+            !isVehiclePose(value.pose)
+          )
+            continue;
+          const driver =
+            'driver' in value && isPlayerId(value.driver)
+              ? value.driver
+              : undefined;
+          const previous = vehicleTracks.get(kind);
+          vehicleTracks.set(kind, {
+            from:
+              previous && driver === previous.to.driver
+                ? interpolateVehicle(previous, now)
+                : value.pose,
+            to: { pose: value.pose, driver },
+            receivedAt: now,
+          });
+        }
+      }
       const crown = 'crown' in message ? message.crown : undefined;
       if (
         crown &&
@@ -268,13 +359,24 @@ export function createPresence(
         crown &&
         typeof crown === 'object' &&
         'holder' in crown &&
-        crown.holder === id &&
+        isPlayerId(crown.holder) &&
         'remainingMs' in crown &&
         typeof crown.remainingMs === 'number' &&
         crown.remainingMs > 0 &&
         crown.remainingMs <= CROWN_DURATION
       ) {
-        onCrown({ expiresAt: now + crown.remainingMs });
+        const holder = message.players.find(
+          (player) =>
+            player && typeof player === 'object' && player.id === crown.holder,
+        );
+        onCrown({
+          expiresAt: now + crown.remainingMs,
+          holderName:
+            crown.holder === id
+              ? undefined
+              : (displayName('name' in crown ? crown.name : holder?.name) ??
+                `Player ${crown.holder}`),
+        });
       } else {
         onCrown(undefined);
       }
@@ -319,8 +421,9 @@ export function createPresence(
 
     connection.addEventListener('close', ({ code }) => {
       if (socket !== connection) return;
-      reset();
-      if (!available || code === 4001) {
+      const reconnect = available && code !== 4001;
+      reset(reconnect);
+      if (!reconnect) {
         status('Solo play', true);
         return;
       }
@@ -330,20 +433,21 @@ export function createPresence(
     });
   }
 
-  function reset() {
+  function reset(preserveCrown = false) {
     socket = undefined;
     id = undefined;
     spawnRevision = 0;
-    onCrown(undefined);
+    if (!preserveCrown) onCrown(undefined);
     clearInterval(sendTimer);
     clearTimeout(reconnectTimer);
     tracks.clear();
+    vehicleTracks.clear();
   }
 
   window.addEventListener('pagehide', () => {
     const connection = socket;
     reset();
-    connection?.close();
+    connection?.close(1000);
   });
   window.addEventListener('pageshow', (event) => {
     if (event.persisted && started) open();
@@ -367,6 +471,15 @@ export function createPresence(
       if (started) return;
       started = true;
       open();
+    },
+    vehicle(kind: VehicleKind, now: number): Vehicle | undefined {
+      const track = vehicleTracks.get(kind);
+      if (track && (track.to.driver === undefined || track.to.driver !== id)) {
+        return {
+          pose: interpolateVehicle(track, now),
+          driver: track.to.driver,
+        };
+      }
     },
     avatars(now: number): Avatar[] {
       return [...tracks.entries()].map(([id, track]) => ({

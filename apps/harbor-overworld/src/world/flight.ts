@@ -51,6 +51,11 @@ const CONTACT_POINTS = [
 const TAKEOFF_SPEED = 9;
 const ACCELERATION = 13;
 const BRAKING = 20;
+const REVERSE_ACCELERATION = 8;
+const PITCH_RATE = 1.65;
+const LANDING_PITCH = 0.55;
+const wrapAngle = (angle: number) =>
+  Math.atan2(Math.sin(angle), Math.cos(angle));
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
@@ -74,8 +79,10 @@ function clearOfTerrain(pose: PlanePose, obstacles: readonly Obstacle[]) {
   const cos = Math.cos(pose.pitch);
   return CONTACT_POINTS.every(([right, back, bottom, top]) => {
     const { x, z } = planeOffset(pose, right, back * cos + bottom * sin);
-    const low = pose.y + bottom * cos - back * sin;
-    const high = pose.y + top * cos - back * sin;
+    const bottomY = pose.y + bottom * cos - back * sin;
+    const topY = pose.y + top * cos - back * sin;
+    const low = Math.min(bottomY, topY);
+    const high = Math.max(bottomY, topY);
     if (ground(x, z) > low) return false;
     return obstacles.every((obstacle) => {
       if (low >= obstacle.top || high <= obstacle.bottom) return true;
@@ -96,14 +103,18 @@ export function fly(
 ): Flight | { crash: PlanePose } {
   const thrust = clamp(forward, -1, 1);
   const throttle = Math.max(0, thrust);
-  const speed = Math.max(
-    0,
-    state.speed + thrust * (thrust < 0 ? BRAKING : ACCELERATION) * dt,
-  );
+  const acceleration =
+    thrust >= 0
+      ? ACCELERATION
+      : state.speed > 0
+        ? BRAKING
+        : REVERSE_ACCELERATION;
+  const nextSpeed = state.speed + thrust * acceleration * dt;
+  const speed = state.airborne ? Math.max(0, nextSpeed) : nextSpeed;
   const airborne = state.airborne || (climb > 0.2 && speed >= TAKEOFF_SPEED);
-  const targetPitch = airborne ? clamp(climb, -1, 1) * 0.42 : 0;
-  const pitch =
-    state.pose.pitch + (targetPitch - state.pose.pitch) * Math.min(1, dt * 3.3);
+  const pitch = airborne
+    ? state.pose.pitch + clamp(climb, -1, 1) * PITCH_RATE * dt
+    : 0;
   const yaw =
     state.pose.yaw + clamp(steer, -1, 1) * dt * (airborne ? 1.65 : 1.15);
   const sink = Math.max(0, TAKEOFF_SPEED - speed) * 0.5;
@@ -115,7 +126,7 @@ export function fly(
     x: clamp(state.pose.x + Math.sin(yaw) * travel, MIN_X + 4, MAX_X - 4),
     y,
     z: clamp(state.pose.z - Math.cos(yaw) * travel, MIN_Z + 4, MAX_Z - 4),
-    pitch: y > WATER ? pitch : 0,
+    pitch,
     yaw,
   };
 
@@ -151,5 +162,13 @@ export function fly(
     }
     clear = point;
   }
-  return { pose, speed, throttle, airborne: y > WATER };
+  const attitude = wrapAngle(pose.pitch);
+  if (state.airborne && y === WATER && Math.abs(attitude) > LANDING_PITCH)
+    return { crash: pose };
+  return {
+    pose: { ...pose, pitch: y > WATER ? attitude : 0 },
+    speed,
+    throttle,
+    airborne: y > WATER,
+  };
 }

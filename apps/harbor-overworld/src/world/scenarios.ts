@@ -4,7 +4,7 @@ import {
   type createPlayerMovement,
   EYE_HEIGHT,
 } from './movement.ts';
-import { DOCK, ground, SPAWN, STATIONS } from './terrain.ts';
+import { DOCK, ground, SOUTH_ARCH, SPAWN, STATIONS } from './terrain.ts';
 
 type Segment = {
   frames: number;
@@ -51,6 +51,13 @@ export const scenarios = {
     z: boardZ + 2.5,
     stations: 1,
     segments: [],
+  },
+  'south-arch': {
+    label: 'Walk through the southern stone arch',
+    x: SOUTH_ARCH.x,
+    z: SOUTH_ARCH.z - 3,
+    yaw: Math.PI,
+    segments: [{ frames: 90, forward: 1 }],
   },
   shoreline: {
     label: 'Shoreline round trip',

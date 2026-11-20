@@ -18,11 +18,22 @@ import {
   type PresenceMessage,
   readChat,
   readKingScale,
+  readVehicleReport,
   ROOM_CAPACITY,
   SHOT_INTERVAL,
   type Shoot,
 } from '../src/world/presence-protocol.ts';
-import { ground, makeTerrain, type Obstacle } from '../src/world/terrain.ts';
+import {
+  ground,
+  makeTerrain,
+  type Obstacle,
+  WATER,
+} from '../src/world/terrain.ts';
+import {
+  type RoomVehicles,
+  VEHICLE_BERTHS,
+  VEHICLE_KINDS,
+} from '../src/world/vehicles.ts';
 import { createPlots, type PlotFeed } from './plots.ts';
 import { traceShot } from './shots.ts';
 
@@ -72,6 +83,23 @@ export function attachPresence(
 ) {
   const server = new WebSocketServer({ noServer: true, maxPayload: 4096 });
   const clients = new Map<string, Client>();
+  const vehicles: RoomVehicles = {
+    boat: { pose: VEHICLE_BERTHS.boat },
+    plane: { pose: VEHICLE_BERTHS.plane },
+  };
+
+  function releaseVehicles(driver: number) {
+    for (const kind of VEHICLE_KINDS) {
+      const vehicle = vehicles[kind];
+      if (vehicle.driver === driver) {
+        vehicles[kind] = {
+          pose: vehicle.pose.y > WATER ? VEHICLE_BERTHS[kind] : vehicle.pose,
+        };
+      }
+    }
+  }
+
+  let detachedKing: { session: string; id: number; name?: string } | undefined;
   let nextId = 1;
   const crown = createCrown(practice ? PRACTICE_CROWN_SITES : undefined);
   let shotObstacles: readonly Obstacle[] | undefined;
@@ -110,6 +138,13 @@ export function attachPresence(
     );
   }
 
+  function retainReign(session: string, client: Client) {
+    const state = crown.state;
+    if ('holder' in state && state.holder === client.id) {
+      detachedKing = { session, id: client.id, name: client.pose?.name };
+    }
+  }
+
   function shoot(client: Client, aim: Shoot, now: number) {
     const state = crown.state;
     if (
@@ -146,6 +181,7 @@ export function attachPresence(
     }
     const { x, y, z, yaw } = spawnView(victim.slot);
     victim.pose = { ...victim.pose, x, y: y - EYE_HEIGHT, z, yaw };
+    releaseVehicles(victim.id);
     victim.spawnRevision++;
     victim.respawnPending = true;
     broadcast({
@@ -187,27 +223,37 @@ export function attachPresence(
       );
       let slot = 0;
       while (occupied.has(slot)) slot++;
+      const now = performance.now();
+      const reign = crown.state;
+      const returningKing =
+        detachedKing?.session === session &&
+        'holder' in reign &&
+        reign.holder === detachedKing.id &&
+        now < reign.expiresAt
+          ? detachedKing
+          : undefined;
+      if (returningKing) detachedKing = undefined;
       const client: Client = {
         ws,
-        id: previous?.id ?? nextId++,
+        id: previous?.id ?? returningKing?.id ?? nextId++,
         slot: previous?.slot ?? slot,
         pose: previous?.pose,
-        updatedAt: performance.now(),
+        updatedAt: now,
         nextPlacement: 0,
         nextShot: 0,
         spawnRevision: previous?.respawnPending ? previous.spawnRevision : 0,
         respawnPending: previous?.respawnPending,
       };
       clients.set(session, client);
-      if (previous) {
-        crown.release(previous.id, playersWithPoses());
-        previous.ws.close(4001, 'Connection replaced');
-      }
+      if (previous) previous.ws.close(4001, 'Connection replaced');
       ws.on('error', () => ws.terminate());
-      ws.on('close', () => {
+      ws.on('close', (code) => {
         if (clients.get(session) !== client) return;
         clients.delete(session);
-        crown.release(client.id, playersWithPoses());
+        releaseVehicles(client.id);
+        if (code === 1000 || code === 1005)
+          crown.release(client.id, playersWithPoses());
+        else retainReign(session, client);
       });
       ws.on('message', (data, binary) => {
         if (binary || clients.get(session) !== client) return;
@@ -258,6 +304,21 @@ export function attachPresence(
               : undefined,
         };
         client.updatedAt = now;
+        const report =
+          'vehicle' in message ? readVehicleReport(message.vehicle) : undefined;
+        if (report?.driving && vehicles[report.kind].driver === client.id) {
+          vehicles[report.kind] = { pose: report.pose, driver: client.id };
+          return;
+        }
+        if (
+          report &&
+          !report.driving &&
+          vehicles[report.kind].driver === client.id
+        )
+          vehicles[report.kind] = { pose: report.pose };
+        releaseVehicles(client.id);
+        if (report?.driving && vehicles[report.kind].driver === undefined)
+          vehicles[report.kind] = { pose: report.pose, driver: client.id };
       });
       const welcome: PresenceMessage = {
         type: 'welcome',
@@ -298,7 +359,8 @@ export function attachPresence(
         ws.bufferedAmount > MAX_QUEUED_BYTES
       ) {
         clients.delete(session);
-        crown.release(client.id, playersWithPoses());
+        releaseVehicles(client.id);
+        retainReign(session, client);
         ws.terminate();
       }
     }
@@ -307,6 +369,11 @@ export function attachPresence(
     const players = playersWithPoses();
     crown.update(now, players);
     const state = crown.state;
+    if (
+      detachedKing &&
+      (!('holder' in state) || state.holder !== detachedKing.id)
+    )
+      detachedKing = undefined;
     for (const player of players) {
       if ('holder' in state && player.id === state.holder) {
         player.king = true;
@@ -319,10 +386,17 @@ export function attachPresence(
     broadcast({
       type: 'players',
       players,
+      vehicles,
       crown:
         'location' in state
           ? state.location
-          : { holder: state.holder, remainingMs: state.expiresAt - now },
+          : {
+              holder: state.holder,
+              remainingMs: state.expiresAt - now,
+              name:
+                players.find((player) => player.id === state.holder)?.name ??
+                detachedKing?.name,
+            },
     });
   }, PRESENCE_INTERVAL);
   timer.unref();

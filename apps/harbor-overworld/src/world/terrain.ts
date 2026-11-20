@@ -1,5 +1,8 @@
 export const SPAWN = { x: 0.5, z: 17.5 };
 export const LIGHTHOUSE = { x: 26.5, z: -37.5 };
+export const SOUTH_ARCH = { x: -17.5, z: 44.5 };
+export const SOUTH_BEACON = { x: 22.5, z: 65.5 };
+export const LANDMARKS = [LIGHTHOUSE, SOUTH_ARCH, SOUTH_BEACON];
 export const DOCK = { start: 6, end: 17.3, z: 19.4, halfWidth: 1.1, deck: 2 };
 type Station = readonly [x: number, z: number, sideways?: boolean];
 export const STATIONS: readonly Station[] = [
@@ -19,6 +22,9 @@ export const STATIONS: readonly Station[] = [
   [4.5, 26.5],
   [-4.5, -43.5],
   [-26.5, -28.5],
+  [10.5, 42.5, true],
+  [-7.5, 45.5],
+  [18.5, 61.5],
 ] as const;
 
 export const NOTICE = { width: 2.34, height: 1.64, bottom: 0.9, face: 0.158 };
@@ -61,6 +67,22 @@ const ROUTES = [
     [4.5, 26.5],
     [0.5, 17.5],
   ],
+  [
+    [0.5, 29],
+    [1.5, 36.5],
+    [-7.5, 45.5],
+    [-16.5, 49.5],
+    [-17.5, 40.5],
+    [-21, 31],
+    [-19.5, 20.5],
+  ],
+  [
+    [1.5, 36.5],
+    [10.5, 42.5],
+    [14.5, 52.5],
+    [18.5, 61.5],
+    [20.5, 66.5],
+  ],
 ];
 
 export function noise(x: number, z: number) {
@@ -88,11 +110,13 @@ export function trailDistance(x: number, z: number) {
 }
 
 function shore(z: number) {
+  const headland = 24 * Math.max(0, 1 - ((z - 58) / 28) ** 2) ** 2;
   return (
     11 +
     Math.sin((z + 9) * 0.14) * 4 +
     23 * Math.exp(-(((z + 32) / 18) ** 2)) -
-    Math.max(0, -z - 48) * 0.4
+    Math.max(0, -z - 48) * 0.4 +
+    headland
   );
 }
 
@@ -100,7 +124,7 @@ export const WATER = 1.1;
 export const MIN_X = -89;
 export const MAX_X = 46;
 export const MIN_Z = -107;
-export const MAX_Z = 60;
+export const MAX_Z = 76;
 
 function ridge(
   x: number,
@@ -414,6 +438,65 @@ function addLighthouse(mesh: Mesh, x: number, y: number, z: number) {
   mesh.box(x - 0.15, y + 11.1, z - 0.15, 0.3, 0.56, 0.3, dark);
 }
 
+function addStoneArch(mesh: Mesh, obstacles: Obstacle[]) {
+  const { x, z } = SOUTH_ARCH;
+  const stone: Color = [0.48, 0.45, 0.34];
+  const top = Math.max(ground(x - 1.7, z), ground(x + 1.7, z)) + 3.45;
+  for (const dx of [-1.7, 1.7]) {
+    const pillar = x + dx;
+    const base = ground(pillar, z) - 0.5;
+    mesh.box(pillar - 0.6, base, z - 0.58, 1.2, 0.86, 1.16, basalt, 2);
+    mesh.box(pillar - 0.45, base, z - 0.46, 0.9, top - base, 0.92, stone, 2);
+    mesh.box(pillar - 0.59, top - 0.4, z - 0.55, 1.18, 0.4, 1.1, basalt, 2);
+    obstacles.push({
+      x: pillar,
+      z,
+      halfWidth: 0.6,
+      halfDepth: 0.58,
+      bottom: base,
+      top,
+    });
+  }
+  obstacles.push({
+    x,
+    z,
+    halfWidth: 2.22,
+    halfDepth: 0.59,
+    bottom: top,
+    top: top + 0.82,
+  });
+  mesh.box(x - 2.22, top, z - 0.56, 4.44, 0.52, 1.12, stone, 2);
+  mesh.box(x - 1.82, top + 0.52, z - 0.46, 3.64, 0.3, 0.92, basalt, 2);
+  mesh.box(x - 0.41, top + 0.06, z - 0.59, 0.82, 0.62, 1.18, stone, 2);
+}
+
+function addSouthBeacon(mesh: Mesh, obstacles: Obstacle[]) {
+  const { x, z } = SOUTH_BEACON;
+  const y = ground(x, z);
+  const stone: Color = [0.76, 0.68, 0.49];
+  const copper: Color = [0.3, 0.43, 0.39];
+  mesh.box(x - 1.1, y - 1, z - 1.1, 2.2, 1.55, 2.2, basalt, 2);
+  mesh.box(x - 0.72, y + 0.55, z - 0.72, 1.44, 2.65, 1.44, stone, 2);
+  mesh.box(x - 0.94, y + 3.2, z - 0.94, 1.88, 0.3, 1.88, copper);
+  mesh.box(x - 0.61, y + 3.5, z - 0.61, 1.22, 0.84, 1.22, [1, 0.72, 0.35], 3);
+  for (const dx of [-0.71, 0.53]) {
+    for (const dz of [-0.71, 0.53]) {
+      mesh.box(x + dx, y + 3.5, z + dz, 0.18, 0.84, 0.18, copper);
+    }
+  }
+  mesh.box(x - 0.92, y + 4.34, z - 0.92, 1.84, 0.22, 1.84, copper);
+  mesh.box(x - 0.64, y + 4.56, z - 0.64, 1.28, 0.28, 1.28, copper);
+  mesh.box(x - 0.34, y + 4.84, z - 0.34, 0.68, 0.27, 0.68, copper);
+  obstacles.push({
+    x,
+    z,
+    halfWidth: 1.1,
+    halfDepth: 1.1,
+    bottom: y - 1,
+    top: y + 5.11,
+  });
+}
+
 export function makeTerrain() {
   const mesh = new Mesh();
   const obstacles: Obstacle[] = [];
@@ -495,7 +578,14 @@ export function makeTerrain() {
           2,
           tone * 0.62,
         );
-      if (coast || rocky || trail < 2 || Math.hypot(x - lightX, z - lightZ) < 4)
+      if (
+        coast ||
+        rocky ||
+        trail < 2 ||
+        LANDMARKS.some(
+          (landmark) => Math.hypot(x - landmark.x, z - landmark.z) < 4,
+        )
+      )
         continue;
       if (x % 3 === 0 && z % 3 === 0 && n > 0.72 && (x < -5 || z < -10)) {
         addTree(mesh, obstacles, x + 0.5, y, z + 0.5, noise(z, x));
@@ -520,6 +610,8 @@ export function makeTerrain() {
   const lightY = ground(lightX, lightZ);
   addLighthouse(mesh, lightX, lightY, lightZ);
   addDock(mesh, obstacles);
+  addStoneArch(mesh, obstacles);
+  addSouthBeacon(mesh, obstacles);
   obstacles.push({
     x: lightX,
     z: lightZ,

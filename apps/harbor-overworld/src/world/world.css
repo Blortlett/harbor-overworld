@@ -220,7 +220,8 @@ a {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
-  white-space: nowrap;
+  max-width: min(42vw, 25rem);
+  overflow-wrap: anywhere;
 }
 #king-size {
   min-height: 36px;

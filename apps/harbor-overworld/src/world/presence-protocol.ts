@@ -1,5 +1,7 @@
+import type { PlanePose } from './flight.ts';
+import type { RoomVehicles, VehicleReport } from './vehicles.ts';
 import { MAX_PITCH } from './movement.ts';
-import { MAX_X, MAX_Z, MIN_X, MIN_Z } from './terrain.ts';
+import { MAX_X, MAX_Z, MIN_X, MIN_Z, WATER } from './terrain.ts';
 
 export const PRESENCE_PATH = '/presence';
 export const PRESENCE_INTERVAL = 100;
@@ -115,7 +117,9 @@ export function readChat(value: unknown): ChatPost | undefined {
 }
 export type Player = NamedPose & { id: number; king?: true; practice?: true };
 export type CrownLocation = { x: number; z: number };
-export type RoomCrown = CrownLocation | { holder: number; remainingMs: number };
+export type RoomCrown =
+  | CrownLocation
+  | { holder: number; remainingMs: number; name?: string };
 
 export function displayName(value: unknown) {
   if (typeof value !== 'string') return undefined;
@@ -151,7 +155,12 @@ export type PresenceMessage =
   | PlacementUpdate
   | { type: 'welcome'; id: number; slot: number; respawn?: Respawn }
   | Gunshot
-  | { type: 'players'; players: Player[]; crown: RoomCrown };
+  | {
+      type: 'players';
+      players: Player[];
+      crown: RoomCrown;
+      vehicles: RoomVehicles;
+    };
 
 const resetClock = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Chicago',
@@ -267,4 +276,29 @@ export function isPose(value: unknown): value is Pose {
     typeof yaw === 'number' &&
     Math.abs(yaw) <= Math.PI
   );
+}
+
+export function isVehiclePose(value: unknown): value is PlanePose {
+  return (
+    isPose(value) &&
+    value.y >= WATER &&
+    value.y <= 67 &&
+    'pitch' in value &&
+    typeof value.pitch === 'number' &&
+    Math.abs(value.pitch) <= Math.PI
+  );
+}
+
+export function readVehicleReport(value: unknown): VehicleReport | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { kind, pose, driving } = value as Partial<VehicleReport>;
+  if (
+    (kind !== 'boat' && kind !== 'plane') ||
+    !isVehiclePose(pose) ||
+    typeof driving !== 'boolean' ||
+    ((kind === 'boat' || !driving) && (pose.y !== WATER || pose.pitch !== 0))
+  )
+    return undefined;
+  const { x, y, z, yaw, pitch } = pose;
+  return { kind, pose: { x, y, z, yaw, pitch }, driving };
 }

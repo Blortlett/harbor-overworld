@@ -2,6 +2,7 @@ import { HIT_LINES } from './presence-protocol';
 
 export function createGunAudio() {
   let context: AudioContext | undefined;
+  let resuming: Promise<void> | undefined;
   let blast: Promise<AudioBuffer | undefined> | undefined;
   let reactions: Promise<AudioBuffer | undefined>[] = [];
 
@@ -23,7 +24,14 @@ export function createGunAudio() {
       blast = load(audio, 'gunshot');
       reactions = HIT_LINES.map((_, index) => load(audio, `hit-${index}`));
     }
-    if (context.state === 'suspended') void context.resume().catch(() => {});
+    if (context.state !== 'running' && !resuming) {
+      resuming = context
+        .resume()
+        .catch(() => {})
+        .finally(() => {
+          resuming = undefined;
+        });
+    }
   }
 
   function playBuffer(
@@ -44,9 +52,11 @@ export function createGunAudio() {
     unlock,
     play(line?: number) {
       const audio = context;
-      if (!audio || !blast || audio.state !== 'running') return;
-      void blast.then((clip) => {
-        if (audio.state !== 'running') return;
+      if (!audio || !blast || (audio.state !== 'running' && !resuming)) return;
+      const receivedAt = performance.now();
+      void Promise.all([blast, resuming]).then(([clip]) => {
+        if (audio.state !== 'running' || performance.now() - receivedAt > 1000)
+          return;
         const time = audio.currentTime;
         if (clip) playBuffer(audio, clip, time, 0.55);
         if (line !== undefined) {

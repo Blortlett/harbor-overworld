@@ -57,12 +57,18 @@ import { SHOT_EFFECT_DURATION, type ShotEffect } from './shot-effects';
 import {
   DOCK,
   ground,
+  LANDMARKS,
+  MAX_X,
+  MAX_Z,
+  MIN_X,
+  MIN_Z,
   noise,
   SPAWN,
   STATIONS,
   trailDistance,
   WATER,
 } from './terrain';
+import type { VehicleKind, VehicleReport } from './vehicles';
 import './world.css';
 
 function element<T extends HTMLElement>(id: string) {
@@ -131,11 +137,31 @@ let nextShot = 0;
 let avatarName: string | undefined;
 const gunAudio = createGunAudio();
 let shotEffects: ShotEffect[] = [];
+let lastDriven: VehicleKind | undefined;
+
+function vehicleReport(): VehicleReport | undefined {
+  const kind = boat.aboard ? 'boat' : plane.aboard ? 'plane' : lastDriven;
+  if (!kind) return undefined;
+  lastDriven = kind;
+  const pose =
+    kind === 'boat' ? { ...boat.pose, y: WATER, pitch: 0 } : plane.pose;
+  return {
+    kind,
+    pose: {
+      ...pose,
+      yaw: Math.atan2(Math.sin(pose.yaw), Math.cos(pose.yaw)),
+      pitch: Math.atan2(Math.sin(pose.pitch), Math.cos(pose.pitch)),
+    },
+    driving: kind === 'boat' ? boat.aboard : plane.aboard,
+  };
+}
+
 const presence = createPresence(
   () => ({
     ...view,
     y: view.y - EYE_HEIGHT,
     name: avatarName,
+    vehicle: vehicleReport(),
     kingScale: kingMode ? kingScale : undefined,
   }),
   (slot) => {
@@ -1079,8 +1105,16 @@ async function enterFromWelcome(capturePointer: boolean) {
 }
 
 function joinFromWelcome() {
+  gunAudio.unlock();
   void controls.run('enter', !game.classList.contains('touch-input'), true);
 }
+game.addEventListener(
+  'click',
+  () => {
+    if (entered) gunAudio.unlock();
+  },
+  { capture: true },
+);
 enterButton.addEventListener('click', joinFromWelcome);
 welcomeIdentity.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -1141,10 +1175,11 @@ function updateCrown(time: number) {
     crown && 'expiresAt' in crown
       ? Math.ceil((crown.expiresAt - time) / 1000)
       : 0;
-  const crowned = seconds > 0;
+  const holderName =
+    crown && 'holderName' in crown ? crown.holderName : undefined;
+  const crowned = seconds > 0 && !holderName;
   if (crowned !== kingMode) {
     kingMode = crowned;
-    kingStatus.hidden = !crowned;
     kingSizeButton.hidden = !crowned;
     kingControls.hidden = !crowned;
     touchShoot.hidden = !crowned;
@@ -1153,10 +1188,11 @@ function updateCrown(time: number) {
     setKingScale(DEFAULT_KING_SCALE);
     announce(crowned ? 'You found the crown!' : 'Your reign has ended.');
   }
-  if (crowned) {
+  kingStatus.hidden = seconds <= 0;
+  if (seconds > 0) {
     const countdown =
       seconds === 60 ? '1:00' : `0:${String(seconds).padStart(2, '0')}`;
-    const label = `King Mode · ${countdown}`;
+    const label = `${holderName ? `King: ${holderName}` : 'King Mode'} · ${countdown}`;
     if (kingStatus.textContent !== label) kingStatus.textContent = label;
   }
   return crown && 'location' in crown ? crown.location : undefined;
@@ -1221,6 +1257,7 @@ document.addEventListener('mousemove', (event) => {
   );
 });
 window.addEventListener('keydown', (event) => {
+  if (entered && event.isTrusted) gunAudio.unlock();
   if (openingReply && event.code === 'KeyR' && event.repeat) {
     event.preventDefault();
     return;
@@ -1344,11 +1381,14 @@ const mapTerrain = document.createElement('canvas');
 mapTerrain.width = map.width;
 mapTerrain.height = map.height;
 const mapBase = mapTerrain.getContext('2d');
-const mapScale = 1.38;
-const mapX = -53;
-const mapZ = -56;
-for (let y = 0; y < map.height; y += 2) {
-  for (let x = 0; x < map.width; x += 2) {
+const mapScale = Math.min(
+  (map.width - 14) / (MAX_X - MIN_X),
+  (map.height - 14) / (MAX_Z - MIN_Z),
+);
+const mapX = (MIN_X + MAX_X - map.width / mapScale) / 2;
+const mapZ = (MIN_Z + MAX_Z - map.height / mapScale) / 2;
+for (let y = 0; y < map.height; y++) {
+  for (let x = 0; x < map.width; x++) {
     if (!mapBase) break;
     const wx = x / mapScale + mapX;
     const wz = y / mapScale + mapZ;
@@ -1364,10 +1404,17 @@ for (let y = 0; y < map.height; y += 2) {
           : land % 4 === 1
             ? '#586047'
             : `hsl(73 20% ${24 + land * 0.55 + n * 5}%)`;
-    mapBase.fillRect(x, y, 2, 2);
+    mapBase.fillRect(x, y, 1, 1);
   }
 }
 if (mapBase) {
+  for (const { x, z } of LANDMARKS) {
+    const px = Math.round((x - mapX) * mapScale);
+    const pz = Math.round((z - mapZ) * mapScale);
+    mapBase.fillStyle = '#d9dac6';
+    mapBase.fillRect(px - 1, pz, 3, 1);
+    mapBase.fillRect(px, pz - 1, 1, 3);
+  }
   mapBase.fillStyle = '#ac8554';
   mapBase.fillRect(
     (DOCK.start - mapX) * mapScale,
@@ -1423,12 +1470,14 @@ function drawHud(avatars: readonly Avatar[] = []) {
     mapContext.fillRect(x - 1, y - 1, 3, 3);
   }
   mapContext.fillStyle = '#a7d8d0';
-  mapContext.fillRect(
-    Math.round((boat.pose.x - mapX) * mapScale) - 1,
-    Math.round((boat.pose.z - mapZ) * mapScale) - 1,
-    3,
-    3,
-  );
+  for (const { x, z } of [boat.pose, plane.pose]) {
+    mapContext.fillRect(
+      Math.round((x - mapX) * mapScale) - 1,
+      Math.round((z - mapZ) * mapScale) - 1,
+      3,
+      3,
+    );
+  }
   mapContext.save();
   mapContext.translate(
     Math.round((view.x - mapX) * mapScale),
@@ -1481,6 +1530,8 @@ function start() {
           sprint: kingMode && controls.sprinting,
         }
       : undefined;
+    boat.follow(presence.vehicle('boat', time));
+    plane.follow(presence.vehicle('plane', time));
     const flying = plane.step(dt, movementInput, collisions.obstacles);
     const boating = boat.step(dt, movementInput);
     if (
@@ -1507,6 +1558,10 @@ function start() {
         : undefined,
     );
     const avatars = presence.avatars(time);
+    for (const avatar of avatars) {
+      if (avatar.name && avatar.name === avatarName)
+        avatar.name = `${avatar.name} · #${avatar.id}`;
+    }
     renderer.draw(
       camera,
       seconds,

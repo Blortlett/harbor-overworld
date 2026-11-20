@@ -28,8 +28,7 @@ function placement({ privateKey }, id, { x, z }, signedEvent, publishedAt) {
   return { type: 'place', id, x, z, proof, signedEvent, publishedAt };
 }
 
-function connect(t) {
-  const session = randomBytes(16).toString('hex');
+function connect(t, session = randomBytes(16).toString('hex')) {
   const ws = new WebSocket(`ws://127.0.0.1:8080/presence?session=${session}`, {
     origin,
   });
@@ -38,6 +37,11 @@ function connect(t) {
   ws.on('message', (data) => received.push(JSON.parse(data)));
   return {
     received,
+    async drop() {
+      const closed = once(ws, 'close');
+      ws.terminate();
+      await closed;
+    },
     async close() {
       ws.close();
       await once(ws, 'close');
@@ -255,8 +259,123 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   );
 
   await t.test(
+    'shares moving vehicles, excludes a second driver, and keeps parked positions',
+    async (t) => {
+      const [pilot, viewer, skipper] = [connect(t), connect(t), connect(t)];
+      const [pilotWelcome, , skipperWelcome] = await Promise.all(
+        [pilot, viewer, skipper].map((peer) =>
+          peer.until((m) => m.type === 'welcome'),
+        ),
+      );
+      const { vehicles } = await viewer.until((m) => m.type === 'players');
+      const boat = { ...vehicles.boat.pose, x: vehicles.boat.pose.x + 2 };
+      const plane = { ...vehicles.plane.pose, y: 14, z: 4, pitch: -2.9 };
+      const drive = (kind, pose, driving = true) => ({
+        ...pose,
+        vehicle: { kind, pose, driving },
+      });
+      pilot.send(drive('plane', plane));
+      skipper.send(drive('boat', boat));
+      await viewer.until(
+        (m) =>
+          m.vehicles?.plane.driver === pilotWelcome.id &&
+          m.vehicles?.plane.pose.pitch === plane.pitch &&
+          m.vehicles?.boat.driver === skipperWelcome.id &&
+          m.vehicles?.boat.pose.x === boat.x,
+      );
+      const cursor = viewer.received.length;
+      viewer.send(drive('plane', { ...plane, x: 39 }));
+      const next = await viewer.until((m) => m.type === 'players', cursor);
+      assert.deepEqual(next.vehicles.plane, {
+        pose: plane,
+        driver: pilotWelcome.id,
+      });
+
+      await sleep(100);
+      skipper.send(drive('boat', { ...boat, x: boat.x + 1 }, false));
+      await viewer.until(
+        (m) =>
+          m.vehicles?.boat.pose.x === boat.x + 1 && !m.vehicles.boat.driver,
+        cursor,
+      );
+      await pilot.drop();
+      const released = await viewer.until(
+        (m) => m.vehicles && !m.vehicles.plane.driver,
+        cursor,
+      );
+      assert.deepEqual(released.vehicles.plane, vehicles.plane);
+      const lateJoin = connect(t);
+      const lateSnapshot = await lateJoin.until((m) => m.type === 'players');
+      assert.deepEqual(lateSnapshot.vehicles.boat, released.vehicles.boat);
+    },
+  );
+
+  await t.test('replacing a tab session keeps one avatar', async (t) => {
+    const session = randomBytes(16).toString('hex');
+    const oldTab = connect(t, session);
+    const { id } = await oldTab.until((m) => m.type === 'welcome');
+    oldTab.send({ x: 3, y: 4, z: 12, yaw: 0, name: 'Reloaded player' });
+    await b.until((m) => m.players?.some((player) => player.id === id));
+    const newTab = connect(t, session);
+    assert.equal((await newTab.until((m) => m.type === 'welcome')).id, id);
+    await sleep(100);
+    newTab.send({ x: 4, y: 4, z: 12, yaw: 0, name: 'Reloaded player' });
+    const { players } = await b.until((m) =>
+      m.players?.some((player) => player.id === id && player.x === 4),
+    );
+    assert.deepEqual(
+      players
+        .filter((player) => player.name === 'Reloaded player')
+        .map((player) => player.id),
+      [id],
+    );
+    await newTab.close();
+  });
+
+  await t.test(
+    'keeps the named holder and original timer through a dropped connection',
+    async (t) => {
+      const session = randomBytes(16).toString('hex');
+      const collector = connect(t, session);
+      const { id } = await collector.until((m) => m.type === 'welcome');
+      const { crown: location } = await collector.until(
+        (m) => m.type === 'players',
+      );
+      const pose = {
+        ...location,
+        y: ground(location.x, location.z),
+        yaw: 0,
+        name: 'Marina',
+      };
+      collector.send(pose);
+      const claimed = await collector.until((m) => m.crown?.holder === id);
+      assert.equal(claimed.crown.name, 'Marina');
+      assert.ok(claimed.crown.remainingMs > 59_000);
+      const cursor = b.received.length;
+      await collector.drop();
+      const detached = await b.until(
+        (m) =>
+          m.crown?.holder === id &&
+          m.players.every((player) => player.id !== id),
+        cursor,
+      );
+      assert.equal(detached.crown.name, 'Marina');
+      const returning = connect(t, session);
+      assert.equal((await returning.until((m) => m.type === 'welcome')).id, id);
+      returning.send(pose);
+      const resumed = await returning.until((m) =>
+        m.players?.some((player) => player.id === id && player.king),
+      );
+      assert.ok(resumed.crown.remainingMs > 0);
+      assert.ok(resumed.crown.remainingMs < claimed.crown.remainingMs);
+      await returning.close();
+    },
+  );
+
+  await t.test(
     'shares a single crown pickup and respawns it on departure',
     async () => {
+      const joinedAt = a.received.length;
       const [collector, rival] = [connect(t), connect(t)];
       const { id: rivalId } = await rival.until((m) => m.type === 'welcome');
       const { id } = await collector.until((m) => m.type === 'welcome');
@@ -268,7 +387,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
         false,
       );
       assert.deepEqual(
-        (await a.until((m) => m.type === 'players')).crown,
+        (await a.until((m) => m.type === 'players', joinedAt)).crown,
         location,
       );
 
@@ -285,7 +404,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
       collector.send(pose);
       rival.send(pose);
       const claimed = (m) =>
-        m.type === 'players' && m.crown.holder !== undefined;
+        m.type === 'players' && [id, rivalId].includes(m.crown.holder);
       const snapshots = await Promise.all(
         [a, collector, rival].map((client) => client.until(claimed)),
       );
@@ -398,6 +517,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
         victim.received.filter((m) => m.type === 'gunshot').length,
         1,
       );
+      await shooter.close();
     },
   );
 

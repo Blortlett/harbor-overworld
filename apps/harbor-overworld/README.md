@@ -13,21 +13,31 @@ when your browser supports fullscreen.
 Follow the coast east of the spawn point to find the dock. Press **F** or tap
 **Board boat** to get aboard. Hold **W** to accelerate, use **S** to brake
 and reverse, and steer with **A/D**. The touch joystick does the same.
-Press **F** or tap **Leave boat** to get out.
+Press **F** or tap **Leave boat** to get out. Everyone in the room sees
+where the boat and seaplane move and where they are parked.
+
+Follow the trail south from the harbor to loop through the stone arch or
+take the coastal fork to the lookout beacon. Both routes have noticeboard
+sites, and pale crosses on the minimap mark the landmarks.
 
 The seaplane is moored on the other side of the dock. Press **G** or tap
 **Board seaplane**. Hold **W** and **↑** to take off, use **A/D** to turn,
-and use **↓** to descend toward open water. Keep holding **W** to accelerate,
-use **S** to slow down, and press **G** to leave once stopped. On touchscreens, use the joystick for throttle
-and steering, and hold **Climb** or **Descend** for pitch.
+and use **↓** to pitch down. Release the yoke to hold your angle, or keep
+pulling up to loop once you have altitude. Keep holding **W** to accelerate.
+Use **S** to brake, or keep holding it on water to reverse. Press **G** to
+leave once stopped. On touchscreens, use the joystick for throttle and
+steering, and hold **Climb** or **Descend** for pitch.
 
 Follow the gold beacon and walk into the crown to become King for one
-minute. The crown appears at a random spot along an island trail and
-respawns when the minute ends or the King leaves the room. While crowned,
+minute. The room shows who is King and how much time remains. The crown
+appears at a random spot along an island trail and respawns when the minute
+ends or the King leaves the room. A temporary disconnect keeps the original
+countdown. While crowned,
 press **K** or tap **Size** to cycle your size. Hold **Space** or **Rise**
 to ascend and release it to fall. Aim with the crosshair and left-click or
-tap **Shoot**. A hit sends the other player back to their harbor spawn. The
-[sound effects credits](public/sounds/CREDITS.txt) include the original
+tap **Shoot**. A hit sends the other player back to their harbor spawn.
+Everyone in the room hears shots and hit reactions from anywhere on the map.
+The [sound effects credits](public/sounds/CREDITS.txt) include the original
 Wilhelm scream.
 
 ## Run locally

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { fly, parkedPlane } from './flight.ts';
 import { createPlayerMovement, EYE_HEIGHT } from './movement.ts';
 import { replayScenario, scenarios, scenarioView } from './scenarios.ts';
 import { ground, makeTerrain, WATER } from './terrain.ts';
@@ -100,4 +101,41 @@ test('tree lets a regular player walk away while the trunk stays solid', () => {
   const frames = replay(scene);
   assert.ok(frames[11].x < trunk.x - trunk.halfWidth - 0.17);
   assert.ok(frames.at(-1).x <= trunk.x - trunk.halfWidth - 0.17);
+});
+
+test('the southern path passes through the arch', () => {
+  const scene = scenarios['south-arch'];
+  const view = replay(scene).at(-1);
+  assert.ok(view.z > scene.z + 6);
+});
+
+test('holding the yoke completes a loop and releasing it holds pitch', () => {
+  const start = { x: 36, y: 21, z: 5, yaw: 0, pitch: 0 };
+  let flight = { ...parkedPlane(start), speed: 16, airborne: true };
+  let rotation = 0;
+  let highest = start.y;
+  for (let frame = 0; rotation < 2 * Math.PI && frame < 300; frame++) {
+    const next = fly(
+      flight,
+      1 / 60,
+      { forward: 0, steer: 0, climb: 1 },
+      obstacles,
+    );
+    assert.ok(!('crash' in next));
+    const delta = next.pose.pitch - flight.pose.pitch;
+    rotation += Math.atan2(Math.sin(delta), Math.cos(delta));
+    highest = Math.max(highest, next.pose.y);
+    flight = next;
+  }
+  assert.ok(rotation >= 2 * Math.PI);
+  assert.ok(highest > start.y + 14);
+  assert.ok(Math.abs(flight.pose.y - start.y) < 1);
+  assert.ok(Math.abs(flight.pose.z - start.z) < 1);
+  const level = fly(
+    flight,
+    1 / 60,
+    { forward: 0, steer: 0, climb: 0 },
+    obstacles,
+  );
+  assert.ok(Math.abs(level.pose.pitch - flight.pose.pitch) < 1e-12);
 });

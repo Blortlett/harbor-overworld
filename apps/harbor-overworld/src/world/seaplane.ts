@@ -12,6 +12,7 @@ import {
   type Obstacle,
   WATER,
 } from './terrain';
+import type { Vehicle } from './vehicles';
 import './seaplane.css';
 
 const CABIN_FLOOR = 0.77;
@@ -112,7 +113,7 @@ export function bindSeaplane(
   const hint = document.createElement('span');
   hint.className = 'plane-hint plate';
   hint.textContent =
-    'W accelerate · S brake · A/D steer · ↑/↓ climb or descend';
+    'W accelerate · S brake or reverse · A/D steer · ↑/↓ pitch';
   const metrics = document.createElement('span');
   metrics.className = 'plane-metrics plate';
   const touchPitch = document.createElement('div');
@@ -126,6 +127,8 @@ export function bindSeaplane(
 
   let flight = parkedPlane();
   let aboard = false;
+  let occupied = false;
+  let boardingView: View | undefined;
   let pitch = 0;
   const { view } = player;
 
@@ -138,13 +141,14 @@ export function bindSeaplane(
   }
 
   function canLeave() {
-    return !flight.airborne && flight.speed <= 0.9;
+    return !flight.airborne && Math.abs(flight.speed) <= 0.9;
   }
 
   function reset() {
     if (!aboard) return;
     flight = parkedPlane(flight.airborne ? undefined : flight.pose);
     aboard = false;
+    boardingView = undefined;
     pitch = 0;
   }
 
@@ -183,7 +187,7 @@ export function bindSeaplane(
   }
 
   function updatePanel() {
-    panel.hidden = !(canUse() && (aboard || canBoard()));
+    panel.hidden = !(!occupied && canUse() && (aboard || canBoard()));
     hint.hidden = !aboard;
     metrics.hidden = !aboard;
     touchPitch.hidden = !aboard;
@@ -202,6 +206,14 @@ export function bindSeaplane(
   }
 
   return {
+    follow(vehicle: Vehicle | undefined) {
+      occupied = vehicle?.driver !== undefined;
+      if (occupied && aboard && boardingView) {
+        player.reset(boardingView);
+        reset();
+      }
+      if (vehicle && !aboard) flight = parkedPlane(vehicle.pose);
+    },
     get pose() {
       return flight.pose;
     },
@@ -209,7 +221,7 @@ export function bindSeaplane(
       return aboard;
     },
     get available() {
-      return canUse() && (aboard ? canLeave() : canBoard());
+      return !occupied && canUse() && (aboard ? canLeave() : canBoard());
     },
     get status() {
       return {
@@ -221,9 +233,10 @@ export function bindSeaplane(
     },
     reset,
     toggle() {
-      if (!canUse()) return false;
+      if (occupied || !canUse()) return false;
       if (aboard) return canLeave() && leave();
       if (!canBoard()) return false;
+      boardingView = { ...view };
       aboard = true;
       syncView();
       return true;
@@ -235,11 +248,15 @@ export function bindSeaplane(
     },
     camera(): View {
       const { y, yaw, pitch } = flight.pose;
+      const cos = Math.cos(pitch);
+      const sin = Math.sin(pitch);
+      const back = 6.2 * cos + 3.55 * sin;
+      const height = 3.55 * cos - 6.2 * sin;
       return {
-        ...planeOffset(flight.pose, 0, 6.2),
-        y: y + 3.55,
+        ...planeOffset(flight.pose, 0, back),
+        y: Math.max(WATER + 0.3, y + height),
         yaw,
-        pitch: pitch * 0.6 - 0.31,
+        pitch: pitch - 0.31,
       };
     },
     step(
