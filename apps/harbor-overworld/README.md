@@ -1,8 +1,10 @@
 # Harbor Overworld
 
 Overworld is a desktop browser game. Live Harbor posts appear on wooden
-noticeboards. Walk with WASD, look with the mouse, turn pages with E, reply
-with R, and open chat with Enter.
+noticeboards, and newly published posts fall from the sky. Walk with WASD,
+look with the mouse, jump with Space, turn noticeboard pages with E, reply
+with R, and open chat with Enter. Chat appears above your avatar and publishes
+a public Harbor post attributed to Harbor Overworld.
 
 ## Run locally
 
@@ -63,8 +65,8 @@ the same preview joins one room of up to 24 players.
    identity** opens the pairing dialog. Close it, select **Enter world**, and
    walk toward a lantern to read its noticeboard. Share the root URL.
 
-Visitors can explore as guests or connect using a pairing link or code from
-their Harbor app. They approve the browser in Harbor. A backup file also works.
+Visitors can explore as guests, pick a display name to create an identity,
+or connect using a pairing link or code from their Harbor app. They approve the browser in Harbor. A backup file also works.
 The browser saves the connected identity for this hostname. All Harbor traffic
 goes directly from the browser to the production network. The host serves only
 static files.

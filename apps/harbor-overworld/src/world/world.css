@@ -618,3 +618,37 @@ button.text-link {
   font-size: 14px;
   cursor: pointer;
 }
+
+.welcome-identity {
+  display: grid;
+  max-width: 310px;
+  gap: 5px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  text-shadow: 0 1px 5px #101912;
+}
+.welcome-identity input {
+  padding: 8px 10px;
+  background: var(--plate);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+}
+.welcome-identity p {
+  margin: 0;
+  color: var(--gold);
+}
+
+.self-chat {
+  position: absolute;
+  top: 15%;
+  left: 50%;
+  translate: -50% 0;
+  width: max-content;
+  max-width: min(480px, 85%);
+  margin: 0;
+  padding: 8px 13px;
+  overflow-wrap: anywhere;
+  text-align: center;
+  pointer-events: none;
+}

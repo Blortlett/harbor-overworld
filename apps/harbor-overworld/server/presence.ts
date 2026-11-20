@@ -10,6 +10,7 @@ import {
   PRESENCE_PATH,
   type NamedPose,
   type PresenceMessage,
+  readChat,
   ROOM_CAPACITY,
 } from '../src/world/presence-protocol.ts';
 
@@ -37,7 +38,7 @@ function sameHost(request: IncomingMessage) {
 }
 
 export function attachPresence(http: HttpServer) {
-  const server = new WebSocketServer({ noServer: true, maxPayload: 512 });
+  const server = new WebSocketServer({ noServer: true, maxPayload: 1536 });
   const clients = new Map<string, Client>();
   let nextId = 1;
 
@@ -95,6 +96,7 @@ export function attachPresence(http: HttpServer) {
           z,
           yaw,
           name: 'name' in message ? displayName(message.name) : undefined,
+          chat: 'chat' in message ? readChat(message.chat) : undefined,
         };
         client.updatedAt = now;
       });

@@ -21,6 +21,14 @@ export type View = {
   pitch: number;
 };
 export const EYE_HEIGHT = 1.64;
+export type FallingPost = {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  start: number;
+  paper: HTMLCanvasElement;
+};
 
 const sky = `
   vec3 horizon(vec3 ray) {
@@ -218,8 +226,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const stations = gl.createBuffer();
   const noticeFaces = gl.createBuffer();
   const nameplateFace = gl.createBuffer();
+  const dropTextures = new Map<string, WebGLTexture>();
   const nameTextures = new Map<
-    number,
+    string,
     { name: string; texture: WebGLTexture; halfWidth: number }
   >();
   const avatarMeshes = COATS.map((_, index) => {
@@ -316,15 +325,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     if (texture) uploadTexture(texture, image);
   }
 
-  function nameTexture(id: number, name: string) {
-    const cached = nameTextures.get(id);
+  function nameTexture(key: string, id: number, name: string) {
+    const cached = nameTextures.get(key);
     if (cached?.name === name) return cached;
     const image = nameplate(id, name);
     const texture = image && (cached?.texture ?? createTexture());
     if (!image || !texture) return undefined;
     uploadTexture(texture, image);
     const label = { name, texture, halfWidth: (image.width * 0.45) / 128 };
-    nameTextures.set(id, label);
+    nameTextures.set(key, label);
     return label;
   }
 
@@ -353,7 +362,12 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         setNotice(index, page);
       }
     },
-    draw(view: View, time: number, avatars: readonly Avatar[]) {
+    draw(
+      view: View,
+      time: number,
+      avatars: readonly Avatar[],
+      drops: readonly FallingPost[],
+    ) {
       const gl = context;
       const height = Math.max(1, Math.min(canvas.clientHeight, 660));
       const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
@@ -431,15 +445,28 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         for (const attr of avatarAttributes) gl.disableVertexAttribArray(attr);
       }
 
-      for (const [id, { texture }] of nameTextures) {
-        if (avatars.some((avatar) => avatar.id === id)) continue;
-        gl.deleteTexture(texture);
-        nameTextures.delete(id);
+      const activeNames = new Set<string>();
+      for (const avatar of avatars) {
+        activeNames.add(String(avatar.id));
+        if (avatar.chat?.text) activeNames.add(`chat:${avatar.id}`);
+      }
+      for (const [key, { texture }] of nameTextures) {
+        if (!activeNames.has(key)) {
+          gl.deleteTexture(texture);
+          nameTextures.delete(key);
+        }
+      }
+      const activeDrops = new Set(drops.map((drop) => drop.id));
+      for (const [key, texture] of dropTextures) {
+        if (!activeDrops.has(key)) {
+          gl.deleteTexture(texture);
+          dropTextures.delete(key);
+        }
       }
       const nearby = visible.filter(
         ({ x, z }) => Math.hypot(x - view.x, z - view.z) < 17,
       );
-      if (noticeTextures.length || nearby.length) {
+      if (noticeTextures.length || nearby.length || drops.length) {
         gl.useProgram(noticeProgram);
         camera(noticeUniforms);
         gl.bindBuffer(gl.ARRAY_BUFFER, noticeFaces);
@@ -451,62 +478,115 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           gl.bindTexture(gl.TEXTURE_2D, texture);
           gl.drawArrays(gl.TRIANGLES, index * NOTICE_VERTICES, NOTICE_VERTICES);
         }
-        if (nearby.length) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, nameplateFace);
-          gl.vertexAttribPointer(noticePoint, 3, gl.FLOAT, false, 20, 0);
-          gl.vertexAttribPointer(paperUv, 2, gl.FLOAT, false, 20, 12);
-          for (const avatar of nearby) {
-            const label = nameTexture(
+        gl.bindBuffer(gl.ARRAY_BUFFER, nameplateFace);
+        gl.vertexAttribPointer(noticePoint, 3, gl.FLOAT, false, 20, 0);
+        gl.vertexAttribPointer(paperUv, 2, gl.FLOAT, false, 20, 12);
+
+        function billboard(
+          texture: WebGLTexture,
+          x: number,
+          z: number,
+          bottom: number,
+          halfWidth: number,
+          height: number,
+        ) {
+          const leftX = x - cy * halfWidth;
+          const leftZ = z - sy * halfWidth;
+          const rightX = x + cy * halfWidth;
+          const rightZ = z + sy * halfWidth;
+          const top = bottom + height;
+          gl.bufferData(
+            gl.ARRAY_BUFFER,
+            new Float32Array([
+              leftX,
+              bottom,
+              leftZ,
+              0,
+              1,
+              rightX,
+              bottom,
+              rightZ,
+              1,
+              1,
+              rightX,
+              top,
+              rightZ,
+              1,
+              0,
+              leftX,
+              bottom,
+              leftZ,
+              0,
+              1,
+              rightX,
+              top,
+              rightZ,
+              1,
+              0,
+              leftX,
+              top,
+              leftZ,
+              0,
+              0,
+            ]),
+            gl.DYNAMIC_DRAW,
+          );
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        }
+
+        for (const avatar of nearby) {
+          const label = nameTexture(
+            String(avatar.id),
+            avatar.id,
+            avatar.name ?? `Guest ${avatar.id}`,
+          );
+          if (label)
+            billboard(
+              label.texture,
+              avatar.x,
+              avatar.z,
+              avatar.y + 1.63,
+              label.halfWidth,
+              0.225,
+            );
+          if (avatar.chat?.text) {
+            const chat = nameTexture(
+              `chat:${avatar.id}`,
               avatar.id,
-              avatar.name ?? `Guest ${avatar.id}`,
+              avatar.chat.text,
             );
-            if (!label) continue;
-            const { texture, halfWidth } = label;
-            const leftX = avatar.x - cy * halfWidth;
-            const leftZ = avatar.z - sy * halfWidth;
-            const rightX = avatar.x + cy * halfWidth;
-            const rightZ = avatar.z + sy * halfWidth;
-            const bottom = avatar.y + 1.63;
-            const top = bottom + 0.225;
-            gl.bufferData(
-              gl.ARRAY_BUFFER,
-              new Float32Array([
-                leftX,
-                bottom,
-                leftZ,
-                0,
-                1,
-                rightX,
-                bottom,
-                rightZ,
-                1,
-                1,
-                rightX,
-                top,
-                rightZ,
-                1,
-                0,
-                leftX,
-                bottom,
-                leftZ,
-                0,
-                1,
-                rightX,
-                top,
-                rightZ,
-                1,
-                0,
-                leftX,
-                top,
-                leftZ,
-                0,
-                0,
-              ]),
-              gl.DYNAMIC_DRAW,
-            );
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            if (chat)
+              billboard(
+                chat.texture,
+                avatar.x,
+                avatar.z,
+                avatar.y + 1.93,
+                Math.max(chat.halfWidth, 0.72),
+                0.29,
+              );
           }
+        }
+        for (const drop of drops) {
+          if (time < drop.start) continue;
+          let texture = dropTextures.get(drop.id);
+          if (!texture) {
+            texture = createTexture() ?? undefined;
+            if (!texture) continue;
+            uploadTexture(texture, drop.paper);
+            dropTextures.set(drop.id, texture);
+          }
+          const progress = Math.min(1, (time - drop.start) / 1.7);
+          const elevation = 10 * (1 - progress * progress);
+          const height = drop.paper.height > 32 ? 1.45 : 0.28;
+          billboard(
+            texture,
+            drop.x,
+            drop.z,
+            drop.y + 0.12 + elevation,
+            1.06,
+            height,
+          );
         }
         gl.disableVertexAttribArray(noticePoint);
         gl.disableVertexAttribArray(paperUv);

@@ -9,15 +9,16 @@ import { createPost, MAX_POST_LENGTH } from '../data/compose';
 import { loadExplorePage } from '../data/feed';
 import { createIdentity, latestLocalProfile } from '../data/identity';
 import { eventKeyFromId, type PostData } from '../data/posts';
-import { coatIndex, COATS } from './avatar';
+import { coatIndex, COATS, nameplate } from './avatar';
 import { bindIdentityDialog } from './connect';
 import { PostNotice } from './notice';
 import { type Avatar, createPresence } from './presence';
-import { displayName } from './presence-protocol';
+import { type ChatPost, displayName, readChat } from './presence-protocol';
 import { loadProfile } from '../data/profile';
 import {
   createRenderer,
   EYE_HEIGHT,
+  type FallingPost,
   facingNotice,
   spawnView,
   walk,
@@ -64,9 +65,24 @@ const movement = [
 ];
 const view = spawnView();
 const roomStatus = element('room-status');
+const welcomeIdentity = element<HTMLFormElement>('welcome-identity');
+const welcomeName = element<HTMLInputElement>('welcome-name');
+const welcomeError = element('welcome-error');
+const enterButton = element<HTMLButtonElement>('enter-world');
+let jump = 0;
+let jumpSpeed = 0;
+let spoken: (ChatPost & { until: number }) | undefined;
 let avatarName: string | undefined;
 const presence = createPresence(
-  () => ({ ...view, y: view.y - EYE_HEIGHT, name: avatarName }),
+  () => ({
+    ...view,
+    y: view.y - EYE_HEIGHT + jump,
+    name: avatarName,
+    chat:
+      spoken && performance.now() < spoken.until
+        ? { id: spoken.id, text: spoken.text }
+        : undefined,
+  }),
   (slot) => {
     if (Math.hypot(view.x - SPAWN.x, view.z - SPAWN.z) > 0.25) return;
     const { x, y, z } = spawnView(slot);
@@ -89,11 +105,52 @@ let client: PolycentricClient | undefined;
 let toastTimer = 0;
 let resumePointer = false;
 let resumeChat = false;
+let haveFeed = false;
+const feedStartedAt = Date.now();
+const seenPosts = new Set<string>();
+const drops: FallingPost[] = [];
+
+function dropPost(
+  id: string,
+  paper: HTMLCanvasElement,
+  x: number,
+  z: number,
+  delay = 0,
+) {
+  if (seenPosts.has(id)) return;
+  seenPosts.add(id);
+  if (seenPosts.size > 2000) {
+    const oldest = seenPosts.values().next().value;
+    if (oldest) seenPosts.delete(oldest);
+  }
+  drops.push({
+    id,
+    paper,
+    x,
+    z,
+    y: Math.max(1.1, ground(x, z)),
+    start: performance.now() / 1000 + delay,
+  });
+}
+
+function dropNotice(post: PostData, delay = 0) {
+  if (seenPosts.has(post.id)) return;
+  const notice = new PostNotice(post, () => undefined);
+  const side = Math.sin(drops.length * 2) * 2;
+  dropPost(
+    post.id,
+    notice.canvas,
+    view.x + Math.sin(view.yaw) * 6 + Math.cos(view.yaw) * side,
+    view.z - Math.cos(view.yaw) * 6 + Math.sin(view.yaw) * side,
+    delay,
+  );
+}
 
 draft.maxLength = MAX_POST_LENGTH;
 
 function updateAvatarName(activeClient: PolycentricClient) {
   const identity = activeClient.activeIdentityKey;
+  welcomeIdentity.hidden = !!identity;
   avatarName = identity
     ? displayName(latestLocalProfile(activeClient, identity)?.name)
     : undefined;
@@ -151,6 +208,14 @@ async function loadPosts() {
       (post) => byId.get(post.id) ?? new PostNotice(post, updateNotice),
     );
     renderer?.setStations(notices.map((notice) => notice.canvas));
+    if (haveFeed && entered) {
+      const fresh = posts.filter(
+        (post) => post.createdAt >= feedStartedAt && !seenPosts.has(post.id),
+      );
+      for (const [index, post] of fresh.slice(0, 5).entries())
+        dropNotice(post, index * 0.23);
+    }
+    haveFeed = true;
     markNetwork(
       'live',
       'PRODUCTION',
@@ -344,6 +409,14 @@ chatForm.addEventListener('submit', async (event) => {
     const message = replyTo
       ? 'Reply published to Harbor.'
       : 'Post published to Harbor.';
+    const chat = readChat({ id: pending.id, text: pending.content });
+    if (chat?.text) {
+      spoken = { ...chat, until: performance.now() + 10_000 };
+      const selfChat = element('self-chat');
+      selfChat.textContent = chat.text;
+      selfChat.hidden = false;
+    }
+    dropNotice(pending);
     pending = undefined;
     replyTo = undefined;
     draft.value = '';
@@ -430,10 +503,45 @@ connectIdentity.addEventListener('click', openIdentity);
 element('existing-identity').addEventListener('click', openIdentity);
 refresh.addEventListener('click', () => void loadPosts());
 pageButton.addEventListener('click', () => turnPage());
-element('enter-world').addEventListener('click', () => enter(true));
+async function enterFromWelcome() {
+  if (busy) return;
+  const name = welcomeName.value.trim();
+  if (!name || client?.activeIdentityKey) {
+    enter(true);
+    return;
+  }
+  busy = true;
+  enterButton.disabled = true;
+  welcomeName.disabled = true;
+  welcomeError.textContent = 'Creating your Harbor identity…';
+  welcomeError.hidden = false;
+  try {
+    client = await getClient();
+    if (!client.activeIdentityKey) await createIdentity(client, name);
+    updateAvatarName(client);
+    connectIdentity.hidden = true;
+    enter(false);
+  } catch (error) {
+    console.error('Could not create a Harbor identity:', error);
+    welcomeError.textContent =
+      'Could not create your identity. Try again or clear the name to play as a guest.';
+  } finally {
+    busy = false;
+    enterButton.disabled = false;
+    welcomeName.disabled = false;
+  }
+}
+
+enterButton.addEventListener('click', () => void enterFromWelcome());
+welcomeIdentity.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void enterFromWelcome();
+});
 element('open-chat').addEventListener('click', () => void openChat());
 element('reply').addEventListener('click', replyToNotice);
-world.addEventListener('click', () => enter(true));
+world.addEventListener('click', () => {
+  if (!busy) enter(true);
+});
 world.addEventListener('pointerdown', () => {
   dragging = entered && document.pointerLockElement !== world;
 });
@@ -463,6 +571,7 @@ window.addEventListener('keydown', (event) => {
     event.ctrlKey ||
     event.altKey ||
     event.metaKey ||
+    event.target === welcomeName ||
     chatPanel.open ||
     connectPanel.open
   )
@@ -476,6 +585,11 @@ window.addEventListener('keydown', (event) => {
   ) {
     event.preventDefault();
     if (!event.repeat) void openChat();
+  }
+  if (entered && event.code === 'Space') {
+    event.preventDefault();
+    if (!event.repeat && jump === 0) jumpSpeed = 5.6;
+    return;
   }
   if (focusedNotice && !event.repeat) {
     if (event.code === 'KeyE') turnPage(event.shiftKey);
@@ -614,10 +728,35 @@ function start() {
       );
       walk(view, keys, dt, renderer.obstacles, notices.length);
     }
-    const noticeIndex = exploring ? facingNotice(view, notices.length) : -1;
+    if (jump > 0 || jumpSpeed > 0) {
+      jumpSpeed -= 13 * dt;
+      jump = Math.max(0, jump + jumpSpeed * dt);
+      if (jump === 0) jumpSpeed = 0;
+    }
+    const camera = { ...view, y: view.y + jump };
+    const noticeIndex = exploring ? facingNotice(camera, notices.length) : -1;
     focusNotice(notices[noticeIndex]);
     const avatars = presence.avatars(time);
-    renderer.draw(view, time / 1000, avatars);
+    for (const avatar of avatars) {
+      if (!avatar.chat?.text || seenPosts.has(avatar.chat.id)) continue;
+      const paper = nameplate(avatar.id, avatar.chat.text);
+      if (paper)
+        dropPost(
+          avatar.chat.id,
+          paper,
+          avatar.x + Math.sin(avatar.yaw) * 2,
+          avatar.z - Math.cos(avatar.yaw) * 2,
+        );
+    }
+    const seconds = time / 1000;
+    for (let index = drops.length - 1; index >= 0; index--) {
+      if (seconds - drops[index].start > 22) drops.splice(index, 1);
+    }
+    if (spoken && time >= spoken.until) {
+      spoken = undefined;
+      element('self-chat').hidden = true;
+    }
+    renderer.draw(camera, seconds, avatars, drops);
     drawHud(avatars);
   }
   requestAnimationFrame(frame);
@@ -625,3 +764,7 @@ function start() {
 
 start();
 void loadPosts();
+
+window.setInterval(() => {
+  if (entered && !document.hidden) void loadPosts();
+}, 12_000);

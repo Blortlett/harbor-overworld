@@ -75,7 +75,7 @@ export function getClient(): Promise<PolycentricClient> {
       core: new PolycentricCore(),
       ...drivers,
       seedServers,
-      // Omit application metadata. See the privacy requirement in the README.
+      // The chat composer attributes its own signed posts to Overworld.
     });
 
     // Sync in the background. Pages read local data right away.

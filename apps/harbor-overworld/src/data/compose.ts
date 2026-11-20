@@ -3,6 +3,7 @@
 // in the background.
 import type { PolycentricClient } from '@polycentric/js-core';
 import { COLLECTION, v2 } from '@polycentric/js-core';
+import { version } from '../../package.json';
 import { type PostData, decodePostBundle, eventKeyFromId } from './posts';
 
 export const MAX_POST_LENGTH = 2000;
@@ -45,6 +46,12 @@ export async function createPost(
 
   const { signedEvent, contentBytes } = await client.createEvent({
     collection: COLLECTION.FEED,
+    application: {
+      name: 'Harbor Overworld',
+      id: 'how.justin.harbor-overworld',
+      version,
+      url: 'https://github.com/SomewhatJustin/harbor-overworld',
+    },
     content: v2.Content.create({ contentBody: { oneofKind: 'post', post } }),
   });
 

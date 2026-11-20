@@ -6,6 +6,8 @@ import {
   PRESENCE_PATH,
   type NamedPose,
   type Pose,
+  type ChatPost,
+  readChat,
   ROOM_CAPACITY,
 } from './presence-protocol';
 
@@ -14,6 +16,7 @@ export type Avatar = NamedPose & { id: number; walking: boolean };
 type Track = {
   from: Pose;
   name?: string;
+  chat?: ChatPost;
   to: Pose;
   receivedAt: number;
   walking: boolean;
@@ -70,13 +73,14 @@ export function createPresence(
       connection.bufferedAmount > 1024
     )
       return;
-    const { x, y, z, yaw, name } = readPose();
+    const { x, y, z, yaw, name, chat } = readPose();
     connection.send(
       JSON.stringify({
         x,
         y,
         z,
         name,
+        chat,
         yaw: Math.atan2(Math.sin(yaw), Math.cos(yaw)),
       }),
     );
@@ -149,6 +153,7 @@ export function createPresence(
           from,
           to: player,
           name: 'name' in player ? displayName(player.name) : undefined,
+          chat: 'chat' in player ? readChat(player.chat) : undefined,
           receivedAt: now,
           walking: distance > 0.02 && distance < 6,
         });
@@ -202,6 +207,7 @@ export function createPresence(
         id,
         walking: track.walking,
         name: track.name,
+        chat: track.chat,
         ...interpolate(track, now),
       }));
     },

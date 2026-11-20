@@ -60,6 +60,7 @@ export type BuildEventArgs = {
   collection: Collection | number;
   signer: Proto.PublicKey;
   content: Proto.Content;
+  application?: Proto.Application;
 };
 
 export type BuiltEvent = {
@@ -78,6 +79,7 @@ export type CommitEventArgs = {
 export type CreateEventArgs = {
   collection: Collection | number;
   content: Proto.Content;
+  application?: Proto.Application;
 };
 
 export type CreatedEvent = {
@@ -379,6 +381,7 @@ export class PolycentricClient {
     collection,
     signer,
     content,
+    application = this.application,
   }: BuildEventArgs): Promise<BuiltEvent> {
     const contentBytes = Proto.Content.toBinary(content);
     const sequence = this.core.nextSequence(identityKey, collection);
@@ -420,7 +423,7 @@ export class PolycentricClient {
       previousRoot,
       contentDigest: this.contentManager.buildDigest(contentBytes),
       createdAt: BigInt(Date.now()),
-      application: this.application,
+      application,
     });
 
     const identityContentForVC =
@@ -493,6 +496,7 @@ export class PolycentricClient {
   async createEvent({
     collection,
     content,
+    application,
   }: CreateEventArgs): Promise<CreatedEvent> {
     // Snapshot the current login at the start
     const identityKey = this.activeIdentityKey;
@@ -507,6 +511,7 @@ export class PolycentricClient {
       collection,
       signer: keyPair.publicKey,
       content,
+      application,
     });
 
     // Sign event

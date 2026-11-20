@@ -11,7 +11,33 @@ export type Pose = {
   yaw: number;
 };
 
-export type NamedPose = Pose & { name?: string };
+export type ChatPost = { id: string; text: string };
+export type NamedPose = Pose & { name?: string; chat?: ChatPost };
+
+export function readChat(value: unknown): ChatPost | undefined {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('id' in value) ||
+    !('text' in value)
+  )
+    return undefined;
+  const { id, text } = value;
+  if (
+    typeof id !== 'string' ||
+    !/^[0-9a-f]{2,400}$/.test(id) ||
+    typeof text !== 'string'
+  )
+    return undefined;
+  const preview = Array.from(text.replace(/\s+/gu, ' ').trim());
+  return {
+    id,
+    text:
+      preview.length > 140
+        ? preview.slice(0, 139).join('') + '…'
+        : preview.join(''),
+  };
+}
 export type Player = NamedPose & { id: number };
 
 export function displayName(value: unknown) {

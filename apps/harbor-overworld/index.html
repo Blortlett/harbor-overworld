@@ -40,6 +40,11 @@
         <p class="eyebrow"><span></span> THE COAST</p>
         <h1>Harbor<br /><em>Overworld</em></h1>
         <p class="welcome-copy" id="welcome-copy">Follow the lights to read live Harbor posts.</p>
+        <form id="welcome-identity" class="welcome-identity">
+          <label for="welcome-name">New to Harbor? Pick a display name</label>
+          <input id="welcome-name" maxlength="50" autocomplete="nickname" placeholder="Name (optional)" />
+          <p id="welcome-error" role="status" hidden></p>
+        </form>
         <div class="welcome-actions">
           <button type="button" class="primary" id="enter-world">Enter world</button>
           <button type="button" class="connect-link plate" id="connect-identity">Connect Harbor identity</button>
@@ -50,12 +55,14 @@
           <a href="https://github.com/SomewhatJustin/harbor-overworld" target="_blank" rel="noopener">Source on GitHub</a>
         </p>
       </section>
+      <p class="self-chat plate" id="self-chat" hidden></p>
       <p class="toast plate" id="toast" role="status" hidden></p>
       <footer class="hud-bottom">
         <fieldset class="controls plate" aria-label="Game controls">
           <div class="control-row"><span class="key-group"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>Move</span></div>
           <div class="control-row"><span class="key-group"><span class="mouse-key" aria-hidden="true">◫</span></span><span>Look</span></div>
           <div class="control-row"><span class="key-group"><kbd>E</kbd></span><span>Turn page</span></div>
+          <div class="control-row"><span class="key-group"><kbd>Space</kbd></span><span>Jump</span></div>
           <button type="button" class="control-row" id="open-chat"><span class="key-group"><kbd>Enter</kbd></span><span>Chat</span></button>
         </fieldset>
         <div class="map plate">
