@@ -15,6 +15,8 @@ jobs:
       cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      WASM_PROFILE: wasm-release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,11 +25,23 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      - name: Identify WASM build inputs
-        id: wasm-key
+      - name: Identify build cache inputs
+        id: cache-keys
         env:
-          KEY: ${{ runner.os }}-${{ runner.arch }}-overworld-wasm-${{ hashFiles('**/Cargo.toml', 'Cargo.lock', '.cargo/**', 'packages/rs-core/**', 'packages/rs-common/**', 'packages/rs-core-wasm/**', 'protos/**', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'patches/**', '.nvmrc', 'apps/harbor-overworld/scripts/install-wasm-tools.sh') }}
-        run: printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+          JS_INPUTS: ${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'patches/**') }}
+          WASM_INPUTS: ${{ hashFiles('**/Cargo.toml', 'Cargo.lock', '**/.cargo/**', 'rust-toolchain*', 'packages/rs-core/**', 'packages/rs-common/**', 'packages/rs-core-wasm/**', 'protos/**', 'apps/harbor-overworld/scripts/install-wasm-tools.sh') }}
+          SDK_INPUTS: ${{ hashFiles('packages/js-core/**', 'packages/js-browser/**', 'tools/tsconfig/**', 'buf.yaml', 'buf.gen.yaml', 'buf.lock') }}
+        run: |
+          # Hash before restoring any generated files. Bump the relevant schema
+          # version if its build recipe or outputs change outside these inputs.
+          test -n "$JS_INPUTS" && test -n "$WASM_INPUTS" && test -n "$SDK_INPUTS" || exit 1
+          source /etc/os-release
+          platform="$RUNNER_OS-$RUNNER_ARCH-$ID$VERSION_ID"
+          pnpm_version=$(node -p 'require("./package.json").packageManager')
+          js="$platform-$(node --version)-$pnpm_version-$JS_INPUTS"
+          wasm="overworld-wasm-v2-$js-$WASM_PROFILE-$WASM_INPUTS"
+          printf 'pnpm=%s\nwasm=%s\nsdk=%s\n' \
+            "overworld-pnpm-v1-$js" "$wasm" "harbor-sdk-v2-$wasm-$SDK_INPUTS" >> "$GITHUB_OUTPUT"
       - name: Restore compiled WASM and bindings
         id: wasm
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -35,7 +49,7 @@ jobs:
           path: |
             packages/rs-core-wasm/src/generated/wasm
             packages/rs-core-wasm/dist/node
-          key: ${{ steps.wasm-key.outputs.key }}
+          key: ${{ steps.cache-keys.outputs.wasm }}
       - name: Restore generated and compiled Harbor SDK
         id: sdk
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -44,18 +58,29 @@ jobs:
             packages/js-core/src/proto
             packages/js-core/dist
             packages/js-browser/dist
-          key: harbor-sdk-v1-${{ steps.wasm-key.outputs.key }}-${{ hashFiles('packages/js-core/**', 'packages/js-browser/**', 'tools/tsconfig/**', 'buf.yaml', 'buf.gen.yaml') }}
-      - name: Install JavaScript dependencies
+          key: ${{ steps.cache-keys.outputs.sdk }}
+      - name: Install pnpm
+        id: pnpm
         run: |
           npm install --global "$(node -p 'require("./package.json").packageManager')"
-          pnpm install --filter harbor-overworld... --frozen-lockfile
+          store=$(pnpm store path)
+          printf 'store=%s\n' "$store" >> "$GITHUB_OUTPUT"
+      - name: Restore pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm.outputs.store }}
+          key: ${{ steps.cache-keys.outputs.pnpm }}
+      - name: Install JavaScript dependencies
+        run: pnpm install --filter harbor-overworld... --frozen-lockfile --prefer-offline
       - name: Install WASM build tools
         if: steps.wasm.outputs.cache-hit != 'true'
         run: |
           bash apps/harbor-overworld/scripts/install-wasm-tools.sh
       - name: Build WASM and bindings
         if: steps.wasm.outputs.cache-hit != 'true'
-        run: pnpm --filter @polycentric/rs-core-wasm build --profile wasm-release
+        run: |
+          pnpm --filter @polycentric/rs-core-wasm build --profile "$WASM_PROFILE"
+          git diff --exit-code -- Cargo.lock
       - name: Build Harbor SDK
         if: steps.sdk.outputs.cache-hit != 'true'
         run: |
@@ -91,8 +116,6 @@ jobs:
   publish:
     if: github.event_name == 'push' && github.repository == 'SomewhatJustin/harbor-overworld'
     needs: build
-    outputs:
-      published: ${{ steps.release.outputs.published }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -129,9 +152,9 @@ jobs:
           fi
 
   verify:
-    if: ${{ !cancelled() && needs.publish.outputs.published == 'true' }}
-    # A configured deploy hook may fail while the host can still pick up the release.
-    needs: publish
+    if: github.event_name == 'push' && github.repository == 'SomewhatJustin/harbor-overworld'
+    # The host consumes the tested build artifact; publishing is independent.
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 6
     concurrency:
