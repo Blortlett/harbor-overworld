@@ -1,10 +1,12 @@
 import {
   bytesToHex,
+  COLLECTION,
   v2,
   SyncStrategy,
   type PolycentricClient,
   type ServerPushResult,
 } from '@polycentric/js-core';
+import { Query } from '@polycentric/rs-core-wasm/web';
 import { getClient, HARBOR_PRODUCTION_SERVERS } from '../client/client';
 import { createPost, MAX_POST_LENGTH } from '../data/compose';
 import { loadExplorePage } from '../data/feed';
@@ -18,16 +20,20 @@ import { type Avatar, createPresence } from './presence';
 import {
   displayName,
   isPlacedPost,
-  isProof,
+  isPlacement,
   KING_IDENTITY,
   kingChallenge,
+  OVERWORLD_APPLICATION,
   type PlacedPost,
+  type Placement,
   type PlacementUpdate,
   placementChallenge,
   type PostLocation,
   plotDay,
+  postExpired,
 } from './presence-protocol';
 import { loadProfile } from '../data/profile';
+import { fetchOnce } from '../data/query';
 import {
   createRenderer,
   DROP_BASE,
@@ -130,6 +136,10 @@ const presence = createPresence(
       proof: bytesToHex(signature),
     };
   },
+  (crowned) => {
+    kingStatus.textContent =
+      crowned && kingMode ? 'King Mode · Crowned' : 'King Mode';
+  },
 );
 const mobile = bindMobileControls(game, world, {
   hasStarted: () => entered && !chatPanel.open && !connectPanel.open,
@@ -145,7 +155,7 @@ let notices: PostNotice[] = [];
 let focusedNotice: PostNotice | undefined;
 let replyTo: PostData | undefined;
 let pending:
-  | { post: PostData; paper: string; location: PostLocation; proof?: string }
+  | { post: PostData; paper: string; location: PostLocation }
   | undefined;
 let client: PolycentricClient | undefined;
 let toastTimer = 0;
@@ -153,15 +163,17 @@ let resumePointer = false;
 let resumeChat = false;
 let openingReply = false;
 let plotsDay: string | undefined;
-let placementsDay = '';
 type WorldPost = {
   notice: PostNotice;
   drop: FallingPost;
-  proof?: string;
+  landedAt: number;
+  request?: Placement;
+  preview?: HTMLElement;
   retryAt: number;
 };
 const worldPosts = new Map<string, WorldPost>();
 const placementStorage = 'overworld:placement:';
+const readingPlacements = new Set<string>();
 
 function setNotices(posts: readonly PostData[]) {
   const byId = new Map(notices.map((notice) => [notice.post.id, notice]));
@@ -193,30 +205,37 @@ function updatePlots({ day, papers }: { day: string; papers: string[] }) {
   );
 }
 
+function isOverworldPost(post: PostData) {
+  return (
+    v2.Event.fromBinary(post.signedEvent.eventBytes).application?.id ===
+    OVERWORLD_APPLICATION
+  );
+}
+
 function showPlacement(
-  placement: PlacedPost,
+  { id, x, z, landedAt }: PlacedPost,
+  post: PostData,
   {
     live,
-    proof,
+    request,
     author,
-  }: { live?: boolean; proof?: string; author?: string } = {},
+  }: { live?: boolean; request?: Placement; author?: string } = {},
 ) {
-  const { id, x, z, paper } = placement;
+  if (postExpired(landedAt) || post.id !== id) return;
   const existing = worldPosts.get(id);
-  if (existing && (!existing.proof || proof)) return;
+  if (existing && (!existing.request || request)) return;
   if (existing?.drop.x === x && existing.drop.z === z) {
-    existing.proof = undefined;
+    existing.request = undefined;
     return;
   }
-  const post = decodePaper(paper);
-  if (!post || post.id !== id) return;
+  existing?.preview?.remove();
   const notice = new PostNotice(post, updateNotice, { card: true, author });
   let y = ground(x, z);
   for (const { drop } of worldPosts.values()) {
     if (drop.id !== id && drop.x === x && drop.z === z)
       y = Math.max(y, drop.y + DROP_HEIGHT + 0.08);
   }
-  worldPosts.set(id, {
+  const entry: WorldPost = {
     notice,
     drop: {
       id,
@@ -226,91 +245,156 @@ function showPlacement(
       paper: notice.canvas,
       start: performance.now() / 1000 - (live ? 0 : DROP_DURATION),
     },
-    proof,
+    landedAt,
+    request,
     retryAt: 0,
-  });
+  };
+  worldPosts.set(id, entry);
   renderer?.setDrop(id, notice.canvas);
   if (live && !document.hidden) {
-    // The same post card remains visible during the fall even if the player
-    // is facing away or out of rendering range.
     const card = document.createElement('div');
     const coords = document.createElement('span');
     coords.className = 'plate';
     coords.textContent = `${Math.floor(x)} / ${Math.floor(z)}`;
     card.append(notice.canvas, coords);
     fallingPosts.append(card);
+    entry.preview = card;
     if (client) notice.loadAssets(client);
-    window.setTimeout(() => card.remove(), 3450);
+    window.setTimeout(() => {
+      card.remove();
+      entry.preview = undefined;
+    }, 3450);
   }
 }
 
-function refreshDay(now = Date.now()) {
-  const day = plotDay(now);
-  if (day === placementsDay) return;
-  placementsDay = day;
-  worldPosts.clear();
-  fallingPosts.replaceChildren();
-  if (plotsDay && plotsDay !== day) {
-    plotsDay = day;
-    setNotices([]);
-  }
+function restorePlacements() {
   try {
     for (const key of Object.keys(localStorage)) {
       if (!key.startsWith(placementStorage)) continue;
-      if (!key.startsWith(`${placementStorage}${day}:`)) {
-        localStorage.removeItem(key);
-        continue;
-      }
-      const saved = localStorage.getItem(key);
-      if (!saved) continue;
       try {
-        const placement: unknown = JSON.parse(saved);
+        const saved = JSON.parse(localStorage.getItem(key) ?? 'null');
         if (
-          isPlacedPost(placement) &&
-          'proof' in placement &&
-          isProof(placement.proof)
-        )
-          showPlacement(placement, { proof: placement.proof });
+          isPlacement(saved?.request) &&
+          isPlacedPost(saved?.placement) &&
+          saved.placement.paper &&
+          !postExpired(saved.placement.landedAt)
+        ) {
+          const post = decodePaper(saved.placement.paper);
+          if (post) {
+            showPlacement(saved.placement, post, { request: saved.request });
+            continue;
+          }
+        }
       } catch {
-        localStorage.removeItem(key);
+        // Discard invalid saved placements.
       }
+      localStorage.removeItem(key);
     }
   } catch (error) {
     console.warn('Could not restore local Overworld posts:', error);
   }
 }
 
-function updatePlacements({ day, posts, live }: PlacementUpdate) {
-  refreshDay();
-  if (day !== placementsDay) return;
+async function resolvePlacement(placement: PlacedPost, live: boolean) {
+  const { id, landedAt, paper } = placement;
+  if (postExpired(landedAt)) return;
+  const existing = worldPosts.get(id);
+  if (existing) {
+    showPlacement(placement, existing.notice.post, { live: false });
+    return;
+  }
+  if (paper) {
+    const post = decodePaper(paper);
+    if (post && isOverworldPost(post)) showPlacement(placement, post, { live });
+    return;
+  }
+  if (readingPlacements.has(id)) return;
+  readingPlacements.add(id);
+  try {
+    const activeClient = await getClient();
+    const key = eventKeyFromId(id);
+    if (key.collection !== COLLECTION.FEED || !key.signedBy) return;
+    const query = new Query.GetPost({
+      identity: key.identity,
+      sequence: key.sequence,
+      signerKeyPrefix: bytesToHex(key.signedBy.key).slice(0, 16),
+    });
+    for (let attempt = 0; attempt < 3 && !postExpired(landedAt); attempt++) {
+      const bytes = await fetchOnce(
+        activeClient,
+        ['world-post', id, String(attempt)],
+        query,
+        { servers: HARBOR_PRODUCTION_SERVERS, serverTimeoutMs: 2500 },
+      ).catch(() => undefined);
+      if (bytes) {
+        const { candidates } = v2.GetPostResponse.fromBinary(
+          new Uint8Array(bytes),
+        );
+        for (const bundle of candidates) {
+          const post = decodePostBundle(bundle);
+          if (post?.id === id && isOverworldPost(post)) {
+            showPlacement(placement, post, { live });
+            return;
+          }
+        }
+      }
+      if (attempt < 2)
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, 500 * (attempt + 1)),
+        );
+    }
+  } catch (error) {
+    console.warn('Could not load a shared Overworld post:', error);
+  } finally {
+    readingPlacements.delete(id);
+  }
+}
+
+function updatePlacements({ posts, live }: PlacementUpdate) {
   for (const post of posts) {
     const age = Date.now() - post.landedAt;
-    showPlacement(post, { live: live ?? (age >= 0 && age < 1000) });
+    void resolvePlacement(post, live ?? (age >= 0 && age < 1000));
+  }
+}
+
+function prunePlacements(now: number) {
+  for (const [id, entry] of worldPosts) {
+    if (!postExpired(entry.landedAt, now)) continue;
+    entry.preview?.remove();
+    worldPosts.delete(id);
+    try {
+      localStorage.removeItem(placementStorage + id);
+    } catch {
+      // Storage can be unavailable in private browsing.
+    }
   }
 }
 
 function retryPlacements() {
   const now = Date.now();
-  refreshDay(now);
+  if (plotsDay && plotsDay !== plotDay(now)) {
+    plotsDay = undefined;
+    setNotices([]);
+  }
+  prunePlacements(now);
   for (const entry of worldPosts.values()) {
-    if (!entry.proof || entry.retryAt > now) continue;
-    const { id, x, z } = entry.drop;
-    if (presence.place({ type: 'place', id, x, z, proof: entry.proof }))
-      entry.retryAt = now + 8000;
+    if (!entry.request || entry.retryAt > now) continue;
+    if (presence.place(entry.request)) entry.retryAt = now + 8000;
     break;
   }
 }
 
 function publishPlacement(
-  placement: PlacedPost & { proof: string },
+  placement: PlacedPost & { paper: string },
+  post: PostData,
+  request: Placement,
   author?: string,
 ) {
-  refreshDay(placement.landedAt);
-  showPlacement(placement, { live: true, proof: placement.proof, author });
+  showPlacement(placement, post, { live: true, request, author });
   try {
     localStorage.setItem(
-      `${placementStorage}${placementsDay}:${placement.id}`,
-      JSON.stringify(placement),
+      placementStorage + placement.id,
+      JSON.stringify({ placement, request }),
     );
   } catch (error) {
     console.warn('Could not save the local Overworld post:', error);
@@ -355,6 +439,7 @@ function updateAvatarName(activeClient: PolycentricClient) {
     : 'Connect Harbor identity';
   kingMode = identity === KING_IDENTITY && !!activeClient.currentKeyPair;
   kingStatus.hidden = !kingMode;
+  if (!kingMode) kingStatus.textContent = 'King Mode';
   void presence
     .proveKing()
     .catch((error) => console.warn('Could not verify King Mode:', error));
@@ -407,7 +492,11 @@ async function loadPosts() {
       includeLocal: false,
     });
     const posts = [
-      ...new Map(page.items.map((post) => [post.id, post])).values(),
+      ...new Map(
+        page.items
+          .filter((post) => !isOverworldPost(post))
+          .map((post) => [post.id, post]),
+      ).values(),
     ].slice(0, STATIONS.length);
     if (!plotsDay) setNotices(posts);
     markNetwork(
@@ -609,30 +698,35 @@ chatForm.addEventListener('submit', async (event) => {
       pending = { ...result, location: { x, z } };
     }
     const { post, paper, location } = pending;
-    if (!pending.proof) {
-      const pair = activeClient.currentKeyPair;
-      if (
-        !pair ||
-        bytesToHex(pair.publicKey.key) !== bytesToHex(post.signedBy.key)
-      )
-        throw new Error('The publishing identity changed.');
-      pending.proof = bytesToHex(
-        await activeClient.cryptoManager.sign(
-          pair.privateKey.key,
-          placementChallenge(post.id, location.x, location.z),
-          pair.keyType,
-        ),
-      );
-    }
+    const pair = activeClient.currentKeyPair;
+    if (
+      !pair ||
+      bytesToHex(pair.publicKey.key) !== bytesToHex(post.signedBy.key)
+    )
+      throw new Error('The publishing identity changed.');
     if (!(await publish(activeClient, post, retry)))
       throw new Error('No production server confirmed the post.');
+    const publishedAt = Date.now();
+    const proof = bytesToHex(
+      await activeClient.cryptoManager.sign(
+        pair.privateKey.key,
+        placementChallenge(post.id, location.x, location.z, publishedAt),
+        pair.keyType,
+      ),
+    );
+    const signedEvent = btoa(
+      String.fromCharCode(...v2.SignedEvent.toBinary(post.signedEvent)),
+    );
     publishPlacement(
+      { id: post.id, paper, ...location, landedAt: publishedAt },
+      post,
       {
+        type: 'place',
         id: post.id,
-        paper,
         ...location,
-        proof: pending.proof,
-        landedAt: Date.now(),
+        proof,
+        publishedAt,
+        signedEvent,
       },
       latestLocalProfile(activeClient, post.identity)?.name,
     );
@@ -976,11 +1070,12 @@ function start() {
     drawHud();
     return;
   }
-  refreshDay();
+  restorePlacements();
   let previous = performance.now();
   function frame(time: number) {
     requestAnimationFrame(frame);
     if (!renderer) return;
+    if (worldPosts.size) prunePlacements(Date.now());
     const dt = Math.min(0.05, (time - previous) / 1000);
     previous = time;
     const exploring = entered && !chatPanel.open && !connectPanel.open;

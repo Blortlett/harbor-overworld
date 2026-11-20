@@ -4,6 +4,7 @@ import { Content } from '../../../packages/js-core/src/proto/polycentric/v2/cont
 import {
   Event,
   EventBundle,
+  SignedEvent,
 } from '../../../packages/js-core/src/proto/polycentric/v2/events.ts';
 import { EventKey } from '../../../packages/js-core/src/proto/polycentric/v2/event_key.ts';
 import { FeedsServiceClient } from '../../../packages/js-core/src/proto/polycentric/v2/feeds.client.ts';
@@ -17,6 +18,7 @@ import {
   placementChallenge,
   type PlotSnapshot,
   plotDay,
+  postExpired,
 } from '../src/world/presence-protocol.ts';
 import { STATIONS } from '../src/world/terrain.ts';
 import { verifyProof } from './signature.ts';
@@ -66,7 +68,6 @@ export function createPlots(
   let day = plotDay(Date.now());
   let plots = new Map<string, string>();
   const placements = new Map<string, PlacedPost>();
-  const checking = new Set<string>();
   let ready = false;
   if (file) {
     try {
@@ -75,9 +76,10 @@ export function createPlots(
         plots = new Map(state.plots.slice(0, capacity));
         ready = true;
       }
-      if (state.day === day && Array.isArray(state.placements)) {
+      if (Array.isArray(state.placements)) {
         for (const post of state.placements)
-          if (isPlacedPost(post)) placements.set(post.id, post);
+          if (isPlacedPost(post) && !postExpired(post.landedAt))
+            placements.set(post.id, post);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
@@ -112,60 +114,58 @@ export function createPlots(
     if (day !== current) {
       day = current;
       plots.clear();
-      placements.clear();
       save();
       broadcast({ type: 'plots', day, papers: [] });
     }
   }
 
-  async function place({ id, x, z, proof }: Placement) {
+  function prune(now = Date.now()) {
+    for (const [id, post] of placements)
+      if (postExpired(post.landedAt, now)) placements.delete(id);
+  }
+
+  function place({ id, x, z, proof, publishedAt, signedEvent }: Placement) {
     const now = Date.now();
     reset(now);
+    prune(now);
+    if (postExpired(publishedAt, now) || publishedAt > now + 5000) return;
     const existing = placements.get(id);
     if (existing) return existing;
-    if (checking.has(id) || checking.size >= 24) return;
-    checking.add(id);
-    const current = day;
     try {
-      const key = EventKey.fromBinary(Buffer.from(id, 'hex'));
+      const signed = SignedEvent.fromBinary(Buffer.from(signedEvent, 'base64'));
+      const event = Event.fromBinary(signed.eventBytes);
+      const key = event.key;
       if (
+        !key ||
+        key.collection !== 2 ||
+        !/^[a-f0-9]{64}$/.test(key.identity) ||
+        Buffer.from(EventKey.toBinary(key)).toString('hex') !== id ||
+        event.application?.id !== OVERWORLD_APPLICATION ||
         key.signedBy?.keyType !== KeyType.ED25519 ||
-        !verifyProof(key.signedBy.key, placementChallenge(id, x, z), proof)
+        !verifyProof(
+          key.signedBy.key,
+          signed.eventBytes,
+          Buffer.from(signed.signature).toString('hex'),
+        ) ||
+        !verifyProof(
+          key.signedBy.key,
+          placementChallenge(id, x, z, publishedAt),
+          proof,
+        )
       )
         return;
-      const post = await Promise.any(
-        feeds.map(async (feed) => {
-          const response = await feed.getPost(
-            { identity: key.identity, sequence: key.sequence, omitLabels: [] },
-            { timeout: 6000 },
-          ).response;
-          const candidate = readCandidates(
-            response.candidates,
-            current,
-            Date.now(),
-          ).find(
-            (item) =>
-              item.id === id && item.application === OVERWORLD_APPLICATION,
-          );
-          if (!candidate) throw new Error('Overworld post is not indexed yet.');
-          return candidate;
-        }),
-      );
-      reset();
-      if (day !== current) return;
-      const placement = { id, x, z, paper: post.paper, landedAt: Date.now() };
+      const placement = { id, x, z, landedAt: publishedAt };
       placements.set(id, placement);
       save();
       placed(day, placement);
     } catch {
-      // The publisher retries while the production servers index the post.
-    } finally {
-      checking.delete(id);
+      // Ignore malformed placement requests.
     }
   }
 
   let polling = false;
   async function poll() {
+    prune();
     reset();
     const current = day;
     if (polling || plots.size >= capacity) return;
@@ -214,6 +214,7 @@ export function createPlots(
   return {
     snapshot,
     placements() {
+      prune();
       reset();
       return { day, posts: placements.values() };
     },

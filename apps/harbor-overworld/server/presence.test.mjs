@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import {
+  createHash,
+  generateKeyPairSync,
+  randomBytes,
+  sign,
+} from 'node:crypto';
 import { once } from 'node:events';
-import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -25,12 +30,12 @@ function kingProof({ key, privateKey }, nonce) {
   return { type: 'king', key, proof };
 }
 
-function placement({ privateKey }, id, { x, z }) {
+function placement({ privateKey }, id, { x, z }, signedEvent, publishedAt) {
   const challenge = Buffer.from(
-    `Harbor Overworld post location\n${JSON.stringify([id, x, z])}`,
+    `Harbor Overworld post location\n${JSON.stringify([id, x, z, publishedAt])}`,
   );
   const proof = sign(null, challenge, privateKey).toString('hex');
-  return { type: 'place', id, x, z, proof };
+  return { type: 'place', id, x, z, proof, signedEvent, publishedAt };
 }
 
 function connect(t) {
@@ -79,7 +84,9 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     platform: 'node',
     format: 'esm',
   });
-  const { resetTime, postFixtures } = await import(pathToFileURL(fixture));
+  const { resetTime, postFixtures, signHeader } = await import(
+    pathToFileURL(fixture)
+  );
   const { worldPost, regularPost } = postFixtures(authorKey.key);
   await Promise.all([
     copyFile(
@@ -116,6 +123,39 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     ]);
     assert.equal((await fetch(`${origin}/healthz`)).status, 200);
   }
+
+  await t.test(
+    'verifies a known device even when both identity lookups stall',
+    async () => {
+      const verifier = join(dir, 'king.mjs');
+      await build({
+        entryPoints: [fileURLToPath(new URL('./king.ts', import.meta.url))],
+        outfile: verifier,
+        bundle: true,
+        platform: 'node',
+        format: 'esm',
+      });
+      const { verifyKing } = await import(pathToFileURL(verifier));
+      const known = new Set([
+        createHash('sha256')
+          .update(Buffer.from(royalKey.key, 'hex'))
+          .digest('hex'),
+      ]);
+      const nonce = 'e'.repeat(64);
+      const { key, proof } = kingProof(royalKey, nonce);
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () => new Promise(() => {});
+      try {
+        assert.equal(await verifyKing(nonce, key, proof, known), true);
+        assert.equal(
+          await verifyKing('a'.repeat(64), key, proof, known),
+          false,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
 
   await startServer();
   const [a, b] = [connect(t), connect(t)];
@@ -211,21 +251,41 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   );
 
   await t.test(
-    'shares the landing coordinates, restores them on restart, and clears them at 3 a.m. Central',
+    'shares the landing immediately and retains it for exactly one minute across restart and the daily reset',
     async () => {
       const location = { x: 0.75, z: 17.25 };
       const initialPlots = await b.until((m) => m.type === 'plots');
       assert.equal(initialPlots.day, '2026-11-19');
       assert.deepEqual(initialPlots.papers, [regularPost.paper]);
 
-      const signedPlacement = placement(authorKey, worldPost.id, location);
+      const publicTime = resetTime - 1;
+      const header = signHeader(worldPost, authorKey.privateKey);
+      const place = (key, location) =>
+        placement(key, worldPost.id, location, header, publicTime);
+      const signedPlacement = place(authorKey, location);
       const otherLocation = { x: 3, z: 10 };
       const unsigned = { type: 'place', id: worldPost.id, ...otherLocation };
       const denied = [
         ['missing signature', unsigned],
-        ['wrong signer', placement(royalKey, worldPost.id, otherLocation)],
+        ['wrong signer', place(royalKey, otherLocation)],
         ['changed coordinates', { ...signedPlacement, ...otherLocation }],
-        ['wrong application', placement(authorKey, regularPost.id, location)],
+        [
+          'wrong application',
+          placement(
+            authorKey,
+            regularPost.id,
+            location,
+            signHeader(regularPost, authorKey.privateKey),
+            publicTime,
+          ),
+        ],
+        [
+          'wrong event header',
+          {
+            ...signedPlacement,
+            signedEvent: signHeader(worldPost, royalKey.privateKey),
+          },
+        ],
       ];
       for (const [reason, message] of denied) {
         const sender = connect(t);
@@ -250,7 +310,6 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
       const expected = {
         id: worldPost.id,
         ...location,
-        paper: worldPost.paper,
         landedAt: resetTime - 1,
       };
       for (const connection of [a, b]) {
@@ -268,7 +327,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
       assert.deepEqual(restored.posts, [expected]);
 
       const afterRestore = viewer.received.length;
-      viewer.send(placement(authorKey, worldPost.id, otherLocation));
+      viewer.send(place(authorKey, otherLocation));
       const duplicate = await viewer.until(placed, afterRestore);
       assert.equal(duplicate.live, false);
       assert.deepEqual(duplicate.posts, [expected]);
@@ -281,10 +340,17 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
         ),
         { type: 'plots', day: '2026-11-20', papers: [] },
       );
-      assert.deepEqual(
-        JSON.parse(await readFile(plots, 'utf8')).placements,
-        [],
+      assert.deepEqual((await nextDayViewer.until(placed)).posts, [expected]);
+
+      await writeFile(clock, String(publicTime + 60_000));
+      const expiredViewer = connect(t);
+      await expiredViewer.until((m) => m.type === 'welcome');
+      expiredViewer.send(signedPlacement);
+      expiredViewer.send({ x: 1, y: 2, z: 3, yaw: 0 });
+      await expiredViewer.until(
+        (m) => m.type === 'players' && m.players.length > 0,
       );
+      assert.equal(expiredViewer.received.some(placed), false);
     },
   );
 });

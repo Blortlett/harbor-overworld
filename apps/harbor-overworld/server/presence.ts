@@ -46,7 +46,7 @@ function sameHost(request: IncomingMessage) {
 }
 
 export function attachPresence(http: HttpServer, plotsFile?: string) {
-  const server = new WebSocketServer({ noServer: true, maxPayload: 1536 });
+  const server = new WebSocketServer({ noServer: true, maxPayload: 4096 });
   const clients = new Map<string, Client>();
   let nextId = 1;
   let king: Client | undefined;
@@ -120,8 +120,8 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
         if (isPlacement(message)) {
           if (now < client.nextPlacement) return;
           client.nextPlacement = now + 1000;
-          void plots.place(message).then((post) => {
-            if (!post || ws.readyState !== WebSocket.OPEN) return;
+          const post = plots.place(message);
+          if (post) {
             const { day } = plots.placements();
             ws.send(
               JSON.stringify({
@@ -131,7 +131,7 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
                 live: false,
               }),
             );
-          });
+          }
           return;
         }
         if (

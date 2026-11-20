@@ -56,6 +56,7 @@ export function createPresence(
   getKingProof: (
     nonce: string,
   ) => Promise<{ key: string; proof: string } | undefined>,
+  onKing: (enabled: boolean) => void,
 ) {
   const session = Array.from(
     crypto.getRandomValues(new Uint8Array(16)),
@@ -179,6 +180,15 @@ export function createPresence(
         return;
       }
       if (
+        id !== undefined &&
+        message.type === 'king' &&
+        'enabled' in message &&
+        typeof message.enabled === 'boolean'
+      ) {
+        onKing(message.enabled);
+        return;
+      }
+      if (
         message.type === 'plots' &&
         'day' in message &&
         typeof message.day === 'string' &&
@@ -254,6 +264,7 @@ export function createPresence(
     socket = undefined;
     id = undefined;
     nonce = undefined;
+    onKing(false);
     clearInterval(sendTimer);
     clearTimeout(reconnectTimer);
     tracks.clear();

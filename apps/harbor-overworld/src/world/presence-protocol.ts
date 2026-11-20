@@ -6,6 +6,7 @@ export const ROOM_CAPACITY = 24;
 export const KING_IDENTITY =
   'cc8ce89f64566ee9efce26d559d50dfd1ef63bb787c5e4d57f1473a0e94d6727';
 export const OVERWORLD_APPLICATION = 'how.justin.harbor-overworld';
+export const POST_LIFETIME_MS = 60_000;
 
 export function kingChallenge(nonce: string) {
   return new TextEncoder().encode(`Harbor Overworld King Mode\n${nonce}`);
@@ -59,13 +60,15 @@ export type PlotSnapshot = { type: 'plots'; day: string; papers: string[] };
 export type PostLocation = { x: number; z: number };
 export type PlacedPost = PostLocation & {
   id: string;
-  paper: string;
+  paper?: string;
   landedAt: number;
 };
 export type Placement = PostLocation & {
   type: 'place';
   id: string;
   proof: string;
+  publishedAt: number;
+  signedEvent: string;
 };
 export type PlacementUpdate = {
   type: 'placements';
@@ -105,9 +108,14 @@ export function plotDay(time: number) {
     .slice(0, 10);
 }
 
-export function placementChallenge(id: string, x: number, z: number) {
+export function placementChallenge(
+  id: string,
+  x: number,
+  z: number,
+  publishedAt: number,
+) {
   return new TextEncoder().encode(
-    `Harbor Overworld post location\n${JSON.stringify([id, x, z])}`,
+    `Harbor Overworld post location\n${JSON.stringify([id, x, z, publishedAt])}`,
   );
 }
 
@@ -139,7 +147,14 @@ export function isPlacement(value: unknown): value is Placement {
     'type' in value &&
     value.type === 'place' &&
     'proof' in value &&
-    isProof(value.proof)
+    isProof(value.proof) &&
+    'publishedAt' in value &&
+    typeof value.publishedAt === 'number' &&
+    Number.isSafeInteger(value.publishedAt) &&
+    'signedEvent' in value &&
+    typeof value.signedEvent === 'string' &&
+    value.signedEvent.length > 0 &&
+    value.signedEvent.length <= 2048
   );
 }
 
@@ -147,12 +162,17 @@ export function isPlacedPost(value: unknown): value is PlacedPost {
   if (!isPostLocation(value)) return false;
   const { paper, landedAt } = value as Partial<PlacedPost>;
   return (
-    typeof paper === 'string' &&
-    paper.length > 0 &&
-    paper.length <= 16 * 1024 &&
+    (paper === undefined ||
+      (typeof paper === 'string' &&
+        paper.length > 0 &&
+        paper.length <= 16 * 1024)) &&
     typeof landedAt === 'number' &&
     Number.isFinite(landedAt)
   );
+}
+
+export function postExpired(landedAt: number, now = Date.now()) {
+  return now - landedAt >= POST_LIFETIME_MS;
 }
 
 export function parseMessage(text: string): unknown {

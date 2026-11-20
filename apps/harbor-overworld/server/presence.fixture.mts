@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { sign, type KeyObject } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Content } from '../../../packages/js-core/src/proto/polycentric/v2/content.ts';
 import { EventKey } from '../../../packages/js-core/src/proto/polycentric/v2/event_key.ts';
@@ -7,6 +8,7 @@ import {
   EventBundle,
   ListEventsRequest,
   ListEventsResponse,
+  SignedEvent,
 } from '../../../packages/js-core/src/proto/polycentric/v2/events.ts';
 import {
   GetFeedResponse,
@@ -58,6 +60,19 @@ export function postFixtures(signerKey: string) {
     worldPost: makePost(signerKey, 1n, 'how.justin.harbor-overworld'),
     regularPost: makePost(signerKey, 2n, 'org.futo.harbor'),
   };
+}
+
+export function signHeader(
+  post: ReturnType<typeof makePost>,
+  privateKey: KeyObject,
+) {
+  const eventBytes = post.bundle.signedEvent!.eventBytes;
+  return Buffer.from(
+    SignedEvent.toBinary({
+      eventBytes,
+      signature: sign(null, eventBytes, privateKey),
+    }),
+  ).toString('base64');
 }
 
 function grpcFrame(flag: number, payload: Uint8Array) {

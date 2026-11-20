@@ -3,7 +3,7 @@
 Live Harbor posts appear on wooden noticeboards. Posts and replies published
 from Overworld also drop as Harbor post cards at your position. Step back to
 read the card, reply, or open the thread. Everyone in the room sees the fall
-and its landing coordinates on screen.
+and its landing coordinates on screen. The card disappears after one minute.
 
 Walk with WASD, look with the mouse, jump with Space, turn pages with E, reply
 with R, and open chat with Enter. On a touchscreen, use the joystick to move,
@@ -40,11 +40,10 @@ Open `http://127.0.0.1:4173/` in two desktop browser windows and select
 Walk in one window to see its avatar move in the other. Everyone who enters
 the same preview joins one room of up to 24 players.
 
-The presence server keeps up to 16 production posts on shared noticeboards
-and stores Overworld posts at their landing coordinates. Both clear from
-the game at 3 a.m. Central. The public Harbor posts stay in their threads.
-Solo play saves local landings in your browser. The standalone presence
-server saves shared landings to a temporary file by default. Set
+The presence server keeps up to 16 production posts on shared noticeboards,
+which clear at 3 a.m. Central. Posts made in Overworld stay at their landing
+coordinates for one minute. The public Harbor posts stay in their threads.
+The standalone presence server saves the room state to a temporary file by default. Set
 `OVERWORLD_PLOTS_FILE` to a writable path on a persistent volume to keep
 them across container replacements.
 
