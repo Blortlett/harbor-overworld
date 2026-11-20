@@ -6,6 +6,7 @@ import { BUILD_COMMIT } from '../src/world/build.ts';
 import { createCrown } from '../src/world/crown.ts';
 import { createLandShark } from '../src/world/land-shark.ts';
 import { EYE_HEIGHT, spawnView } from '../src/world/movement.ts';
+import { POST_MARK_LIMIT, type PostMark } from '../src/world/post-marks.ts';
 import {
   displayName,
   HIT_LINES,
@@ -38,7 +39,7 @@ import {
   VEHICLE_KINDS,
 } from '../src/world/vehicles.ts';
 import { createPlots, type PlotFeed } from './plots.ts';
-import { traceShot } from './shots.ts';
+import { traceShot } from '../src/world/shot-trace.ts';
 
 const IDLE_MS = 20_000;
 const MAX_QUEUED_BYTES = 64 * 1024;
@@ -104,6 +105,7 @@ export function attachPresence(
 
   let detachedKing: { session: string; id: number; name?: string } | undefined;
   let nextId = 1;
+  const marks: PostMark[] = [];
   const shark = createLandShark();
   const crown = createCrown(practice ? PRACTICE_CROWN_SITES : undefined);
   let shotObstacles: readonly Obstacle[] | undefined;
@@ -163,14 +165,24 @@ export function attachPresence(
     shotObstacles ??= makeTerrain().obstacles;
     const players = playersWithPoses();
     if (practice) players.push(practiceTarget());
+    const { posts } = plots.placements();
+    const plot = plots.snapshot();
     const { path, target, sharkHit } = traceShot(
       { ...client.pose, id: client.id },
       aim,
       players,
       shotObstacles,
-      plots.snapshot()?.papers.length ?? 0,
-      shark.pose,
+      {
+        day: plot?.day,
+        stationCount: plot?.papers.length ?? 0,
+        drops: posts,
+        shark: shark.pose,
+      },
     );
+    if (path.postMark) {
+      marks.push(path.postMark);
+      if (marks.length > POST_MARK_LIMIT) marks.shift();
+    }
     const shot = {
       type: 'gunshot' as const,
       shooter: client.id,
@@ -347,7 +359,9 @@ export function attachPresence(
       const { day, posts } = plots.placements();
       const plotState = plots.snapshot();
       if (plotState) ws.send(JSON.stringify(plotState));
+      const activeDrops = new Set<string>();
       for (const post of posts) {
+        activeDrops.add(post.id);
         ws.send(
           JSON.stringify({
             type: 'placements',
@@ -357,6 +371,14 @@ export function attachPresence(
           }),
         );
       }
+      ws.send(
+        JSON.stringify({
+          type: 'post-marks',
+          marks: marks.filter((mark) =>
+            mark.kind === 'board' ? mark.day === day : activeDrops.has(mark.id),
+          ),
+        } satisfies PresenceMessage),
+      );
     });
   }
 

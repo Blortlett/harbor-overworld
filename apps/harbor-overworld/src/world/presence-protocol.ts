@@ -1,5 +1,6 @@
 import type { PlanePose } from './flight.ts';
 import type { SharkPose } from './land-shark.ts';
+import type { PostMark } from './post-marks.ts';
 import type { RoomVehicles, VehicleReport } from './vehicles.ts';
 import { MAX_PITCH } from './movement.ts';
 import { inWorld, WATER } from './terrain.ts';
@@ -52,6 +53,7 @@ export type ShotPath = {
   start: ShotPoint;
   end: ShotPoint;
   impact: boolean;
+  postMark?: PostMark;
 };
 export type Gunshot = {
   type: 'gunshot';
@@ -142,6 +144,7 @@ export type PlacedPost = PostLocation & {
   id: string;
   paper?: string;
   landedAt: number;
+  floor?: number;
 };
 export type Placement = PostLocation & {
   type: 'place';
@@ -167,6 +170,7 @@ export type PresenceMessage =
       commit?: string;
       respawn?: Respawn;
     }
+  | { type: 'post-marks'; marks: PostMark[] }
   | Gunshot
   | { type: 'shark-hit'; respawn: Respawn }
   | {
@@ -249,14 +253,16 @@ export function isPlacement(value: unknown): value is Placement {
 
 export function isPlacedPost(value: unknown): value is PlacedPost {
   if (!isPostLocation(value)) return false;
-  const { paper, landedAt } = value as Partial<PlacedPost>;
+  const { paper, landedAt, floor } = value as Partial<PlacedPost>;
   return (
     (paper === undefined ||
       (typeof paper === 'string' &&
         paper.length > 0 &&
         paper.length <= 16 * 1024)) &&
     typeof landedAt === 'number' &&
-    Number.isFinite(landedAt)
+    Number.isFinite(landedAt) &&
+    (floor === undefined ||
+      (typeof floor === 'number' && floor >= WATER && Number.isFinite(floor)))
   );
 }
 

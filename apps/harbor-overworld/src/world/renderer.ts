@@ -1,4 +1,12 @@
 import {
+  DROP_BASE,
+  DROP_DURATION,
+  DROP_HALF_WIDTH,
+  DROP_HEIGHT,
+  MARKS_PER_FACE,
+  type PostMark,
+} from './post-marks';
+import {
   avatarMesh,
   coatIndex,
   COATS,
@@ -30,10 +38,6 @@ import {
   WATER,
 } from './terrain';
 
-export const DROP_DURATION = 1.2;
-export const DROP_HEIGHT = 1.75;
-export const DROP_HALF_WIDTH = 1.25;
-export const DROP_BASE = 0.025;
 const DROP_DRAW_RANGE = 40;
 const MAX_FRAMEBUFFER_PIXELS = 3_000_000;
 
@@ -195,6 +199,8 @@ const noticeVertex = `
 const noticeFragment = `
   precision highp float;
   uniform sampler2D paper;
+  uniform int markCount;
+  uniform vec2 marks[${MARKS_PER_FACE}];
   varying vec2 uv;
   varying vec3 relative;
   ${sky}
@@ -204,6 +210,15 @@ const noticeFragment = `
     float mist = (1.0 - exp(-distance * .0105)) * .84;
     vec4 ink = texture2D(paper, uv);
     if (ink.a < .5) discard;
+    for (int i = 0; i < ${MARKS_PER_FACE}; i++) {
+      if (i >= markCount) break;
+      vec2 offset = (uv - marks[i]) * vec2(1.0, .72);
+      float radius = length(offset) + .0016 * sin(atan(offset.y, offset.x) * 7.0);
+      float tear = 1.0 - smoothstep(.013, .020, radius);
+      float puncture = 1.0 - smoothstep(.007, .011, radius);
+      ink.rgb = mix(ink.rgb, vec3(.29,.16,.092), tear * .76);
+      ink.rgb = mix(ink.rgb, vec3(.065,.046,.036), puncture);
+    }
     gl_FragColor = vec4(mix(ink.rgb, fog, mist), 1.0);
   }
 `;
@@ -333,6 +348,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const avatarScale = gl.getUniformLocation(avatarProgram, 'avatarScale');
   const avatarTime = gl.getUniformLocation(avatarProgram, 'time');
   const noticeUniforms = uniformLocations(noticeProgram);
+  const markCount = gl.getUniformLocation(noticeProgram, 'markCount');
+  const markPositions = gl.getUniformLocation(noticeProgram, 'marks[0]');
+  const paperMarks = new Map<string, Float32Array>();
   const beaconUniforms = uniformLocations(beaconProgram);
   const beaconTime = gl.getUniformLocation(beaconProgram, 'time');
   const beaconPoint = gl.getAttribLocation(beaconProgram, 'point');
@@ -424,6 +442,26 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     setDrop(id: string, image: HTMLCanvasElement) {
       const texture = dropTextures.get(id);
       if (texture) uploadTexture(texture, image, true);
+    },
+    setPostMarks(marks: readonly PostMark[], day: string) {
+      paperMarks.clear();
+      const grouped = new Map<string, number[]>();
+      for (const mark of marks) {
+        if (mark.kind === 'board' && mark.day !== day) continue;
+        const key =
+          mark.kind === 'board'
+            ? `board:${mark.station}:${mark.side}`
+            : `drop:${mark.id}`;
+        const points = grouped.get(key) ?? [];
+        points.push(mark.u, mark.v);
+        grouped.set(key, points);
+      }
+      for (const [key, points] of grouped) {
+        paperMarks.set(
+          key,
+          new Float32Array(points.slice(-2 * MARKS_PER_FACE)),
+        );
+      }
     },
     setStations(pages: readonly HTMLCanvasElement[]) {
       const mesh = makeStations(pages.length);
@@ -674,10 +712,26 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         gl.enableVertexAttribArray(paperUv);
         gl.vertexAttribPointer(noticePoint, 3, gl.FLOAT, false, 20, 0);
         gl.vertexAttribPointer(paperUv, 2, gl.FLOAT, false, 20, 12);
+        function showDamage(points?: Float32Array) {
+          gl.uniform1i(markCount, (points?.length ?? 0) / 2);
+          if (points) gl.uniform2fv(markPositions, points);
+        }
         for (const [index, texture] of noticeTextures.entries()) {
           gl.bindTexture(gl.TEXTURE_2D, texture);
-          gl.drawArrays(gl.TRIANGLES, index * NOTICE_VERTICES, NOTICE_VERTICES);
+          const front = paperMarks.get(`board:${index}:1`);
+          const back = paperMarks.get(`board:${index}:-1`);
+          const offset = index * NOTICE_VERTICES;
+          if (front || back) {
+            showDamage(front);
+            gl.drawArrays(gl.TRIANGLES, offset, 6);
+            showDamage(back);
+            gl.drawArrays(gl.TRIANGLES, offset + 6, 6);
+          } else {
+            showDamage();
+            gl.drawArrays(gl.TRIANGLES, offset, NOTICE_VERTICES);
+          }
         }
+        showDamage();
         gl.bindBuffer(gl.ARRAY_BUFFER, nameplateFace);
         gl.vertexAttribPointer(noticePoint, 3, gl.FLOAT, false, 20, 0);
         gl.vertexAttribPointer(paperUv, 2, gl.FLOAT, false, 20, 12);
@@ -738,6 +792,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           }
           const progress = Math.min(1, (time - drop.start) / DROP_DURATION);
           const elevation = 12 * (1 - progress * progress);
+          showDamage(paperMarks.get(`drop:${drop.id}`));
           billboard(
             texture,
             drop.x,

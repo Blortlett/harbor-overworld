@@ -1,6 +1,6 @@
 import type { SharkPose } from './land-shark.ts';
 import type { ShotPoint } from './presence-protocol.ts';
-import { ground, WATER } from './terrain.ts';
+import { WATER } from './terrain.ts';
 
 export const GAME_SHOT_RANGE = 65;
 
@@ -51,31 +51,4 @@ export function sharkHitDepth(
     [0.52, 2.22, 1.75],
     limit,
   );
-}
-
-export function soloSharkHit(
-  origin: ShotPoint,
-  yaw: number,
-  pitch: number,
-  shark: SharkPose,
-): ShotPoint | undefined {
-  const level = Math.cos(pitch);
-  const ray: ShotPoint = [
-    level * Math.sin(yaw),
-    Math.sin(pitch),
-    -level * Math.cos(yaw),
-  ];
-  const distance = sharkHitDepth(origin, ray, shark, GAME_SHOT_RANGE);
-  if (distance === undefined) return undefined;
-  for (let step = 0; step < distance; step += 0.15) {
-    const x = origin[0] + ray[0] * step;
-    const y = origin[1] + ray[1] * step;
-    const z = origin[2] + ray[2] * step;
-    if (y < Math.max(WATER, ground(x, z))) return undefined;
-  }
-  return [
-    origin[0] + ray[0] * distance,
-    origin[1] + ray[1] * distance,
-    origin[2] + ray[2] * distance,
-  ];
 }

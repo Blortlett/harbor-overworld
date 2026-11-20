@@ -48,6 +48,8 @@ press **K** or tap **Size** to cycle your size. Hold **Space** or **Rise**
 to ascend and release it to fall. Aim with the crosshair and left-click or
 tap **Shoot**. A hit sends the other player back to their harbor spawn.
 Everyone in the room hears shots and hit reactions from anywhere on the map.
+Shooting a noticeboard or a landed post leaves a mark that other players
+can see.
 The [sound effects credits](public/sounds/CREDITS.txt) include the original
 Wilhelm scream.
 

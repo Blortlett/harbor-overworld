@@ -1,25 +1,30 @@
 import {
-  GAME_SHOT_RANGE,
-  rayBox,
-  sharkHitDepth,
-} from '../src/world/shot-ray.ts';
-import type { SharkPose } from '../src/world/land-shark.ts';
-import { EYE_HEIGHT } from '../src/world/movement.ts';
+  DROP_BASE,
+  DROP_DURATION,
+  DROP_HALF_WIDTH,
+  DROP_HEIGHT,
+  type PostMark,
+} from './post-marks.ts';
+import { GAME_SHOT_RANGE, rayBox, sharkHitDepth } from './shot-ray.ts';
+import type { SharkPose } from './land-shark.ts';
+import { EYE_HEIGHT } from './movement.ts';
 import type {
+  PlacedPost,
   Player,
   Pose,
   Shoot,
   ShotPath,
   ShotPoint,
-} from '../src/world/presence-protocol.ts';
+} from './presence-protocol.ts';
 import {
   ground,
   type Obstacle,
+  NOTICE,
   STATION_TOP,
   STATIONS,
   stationPenetration,
   WATER,
-} from '../src/world/terrain.ts';
+} from './terrain.ts';
 
 const BODY_HALF_WIDTH = 0.38;
 const BODY_HEIGHT = 1.52;
@@ -29,8 +34,17 @@ export function traceShot(
   aim: Shoot,
   players: readonly Player[],
   obstacles: readonly Obstacle[],
-  stationCount: number,
-  shark: SharkPose,
+  {
+    day,
+    stationCount,
+    drops,
+    shark,
+  }: {
+    day?: string;
+    stationCount: number;
+    drops: Iterable<PlacedPost>;
+    shark?: SharkPose;
+  },
 ): { path: ShotPath; target?: number; sharkHit?: true } {
   const level = Math.cos(aim.pitch);
   const origin: ShotPoint = [
@@ -73,10 +87,48 @@ export function traceShot(
       hit = player;
     }
   }
-  const sharkDistance = sharkHitDepth(origin, direction, shark, nearest);
+  const sharkDistance = shark
+    ? sharkHitDepth(origin, direction, shark, nearest)
+    : undefined;
   if (sharkDistance !== undefined) {
     nearest = sharkDistance;
     hit = undefined;
+  }
+
+  let paper: PostMark | undefined;
+  const now = Date.now();
+  if (day) {
+    for (let station = 0; station < stationCount; station++) {
+      const [x, z, sideways] = STATIONS[station];
+      const normal = sideways ? -direction[0] : direction[2];
+      if (Math.abs(normal) < 1e-8) continue;
+      const side = normal < 0 ? 1 : -1;
+      const offset = sideways ? x - origin[0] : origin[2] - z;
+      const distance = (side * NOTICE.face - offset) / normal;
+      if (distance <= 0 || distance >= nearest) continue;
+      const [px, y, pz] = pointAt(distance);
+      const u = 0.5 + (side * (sideways ? pz - z : px - x)) / NOTICE.width;
+      const v = 1 - (y - ground(x, z) - NOTICE.bottom) / NOTICE.height;
+      if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) continue;
+      nearest = distance;
+      hit = undefined;
+      paper = { kind: 'board', day, station, side, u, v };
+    }
+  }
+  for (const drop of drops) {
+    if (now - drop.landedAt < DROP_DURATION * 1000 || level <= 0) continue;
+    const dx = drop.x - origin[0];
+    const dz = drop.z - origin[2];
+    const distance = (dx * sin - dz * cos) / level;
+    if (distance <= 0 || distance >= nearest) continue;
+    const u = 0.5 - (dx * cos + dz * sin) / (2 * DROP_HALF_WIDTH);
+    const bottom =
+      (drop.floor ?? Math.max(WATER, ground(drop.x, drop.z))) + DROP_BASE;
+    const v = 1 - (pointAt(distance)[1] - bottom) / DROP_HEIGHT;
+    if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) continue;
+    nearest = distance;
+    hit = undefined;
+    paper = { kind: 'drop', id: drop.id, u, v };
   }
 
   function blocked([x, y, z]: ShotPoint) {
@@ -92,6 +144,7 @@ export function traceShot(
       if (inside) return true;
     }
     for (let index = 0; index < stationCount; index++) {
+      if (paper?.kind === 'board' && paper.station === index) continue;
       const station = STATIONS[index];
       if (stationPenetration(station, x, z) <= 0) continue;
       const bottom = ground(station[0], station[1]);
@@ -106,6 +159,16 @@ export function traceShot(
       const end = pointAt(Math.max(0, distance - 0.1));
       return { path: { start: muzzle, end, impact: true } };
     }
+  }
+  if (paper) {
+    return {
+      path: {
+        start: muzzle,
+        end: pointAt(nearest),
+        impact: true,
+        postMark: paper,
+      },
+    };
   }
   return {
     path: {

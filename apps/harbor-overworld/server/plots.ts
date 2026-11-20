@@ -1,3 +1,4 @@
+import { nextDropFloor } from '../src/world/post-marks.ts';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { GrpcWebFetchTransport } from '@protobuf-ts/grpcweb-transport';
 import { Content } from '../../../packages/js-core/src/proto/polycentric/v2/content.ts';
@@ -98,8 +99,14 @@ export function createPlots(
       }
       if (Array.isArray(state.placements)) {
         for (const post of state.placements)
-          if (isPlacedPost(post) && !postExpired(post.landedAt))
-            placements.set(post.id, post);
+          if (isPlacedPost(post) && !postExpired(post.landedAt)) {
+            placements.set(post.id, {
+              ...post,
+              floor:
+                post.floor ??
+                nextDropFloor(post.x, post.z, placements.values()),
+            });
+          }
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
@@ -174,7 +181,13 @@ export function createPlots(
         )
       )
         return;
-      const placement = { id, x, z, landedAt: publishedAt };
+      const placement = {
+        id,
+        x,
+        z,
+        landedAt: publishedAt,
+        floor: nextDropFloor(x, z, placements.values()),
+      };
       placements.set(id, placement);
       save();
       placed(day, placement);

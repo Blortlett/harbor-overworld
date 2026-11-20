@@ -26,6 +26,7 @@ import {
 } from './presence-protocol';
 import type { PlanePose } from './flight';
 import type { SharkPose } from './land-shark';
+import { isPostMark, POST_MARK_LIMIT, type PostMark } from './post-marks';
 import {
   VEHICLE_KINDS,
   type Vehicle,
@@ -134,6 +135,7 @@ export function createPresence(
   onStatus: (label: string, solo: boolean) => void,
   onPlots: (snapshot: PlotSnapshot) => void,
   onPlacements: (update: PlacementUpdate) => void,
+  onPostMarks: (marks: PostMark[]) => void,
   onCrown: (crown: LocalCrown | undefined) => void,
   onGunshot: (
     path: ShotPath,
@@ -298,6 +300,16 @@ export function createPresence(
           line,
           'sharkHit' in message && message.sharkHit === true,
         );
+        return;
+      }
+
+      if (
+        id !== undefined &&
+        message.type === 'post-marks' &&
+        'marks' in message &&
+        Array.isArray(message.marks)
+      ) {
+        onPostMarks(message.marks.filter(isPostMark).slice(-POST_MARK_LIMIT));
         return;
       }
 

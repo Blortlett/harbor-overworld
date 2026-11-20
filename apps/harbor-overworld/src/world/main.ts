@@ -24,6 +24,16 @@ import { createLandShark, type SharkPose } from './land-shark';
 import { bindMobileControls } from './mobile';
 import { createPlayerMovement, EYE_HEIGHT, spawnView } from './movement';
 import { PostNotice } from './notice';
+import {
+  DROP_BASE,
+  DROP_DURATION,
+  DROP_HALF_WIDTH,
+  DROP_HEIGHT,
+  isPostMark,
+  nextDropFloor,
+  POST_MARK_LIMIT,
+  type PostMark,
+} from './post-marks';
 import { type Avatar, createPresence, type LocalCrown } from './presence';
 import {
   DEFAULT_KING_SCALE,
@@ -43,22 +53,13 @@ import {
   postExpired,
   SHOT_INTERVAL,
   type ShotPath,
-  type ShotPoint,
 } from './presence-protocol';
 import { loadProfile } from '../data/profile';
 import { fetchOnce } from '../data/query';
-import {
-  createRenderer,
-  DROP_BASE,
-  DROP_DURATION,
-  DROP_HALF_WIDTH,
-  DROP_HEIGHT,
-  type FallingPost,
-  facingNotice,
-} from './renderer';
+import { createRenderer, type FallingPost, facingNotice } from './renderer';
 import { bindSeaplane } from './seaplane';
 import { SHOT_EFFECT_DURATION, type ShotEffect } from './shot-effects';
-import { soloSharkHit } from './shot-ray';
+import { traceShot } from './shot-trace';
 import {
   DOCK,
   ground,
@@ -149,6 +150,7 @@ const worldAudio = createWorldAudio((blocked) => {
 });
 enableSound.addEventListener('click', () => worldAudio.unlock());
 let shotEffects: ShotEffect[] = [];
+let postMarks: PostMark[] = [];
 let lastDriven: VehicleKind | undefined;
 
 function vehicleReport(): VehicleReport | undefined {
@@ -189,6 +191,7 @@ const presence = createPresence(
   },
   updatePlots,
   updatePlacements,
+  updatePostMarks,
   (crown) => {
     sharedCrown = crown;
   },
@@ -360,8 +363,14 @@ function decodePaper(paper: string) {
   }
 }
 
+function updatePostMarks(marks: PostMark[]) {
+  postMarks = marks;
+  renderer?.setPostMarks(marks, plotDay(Date.now()));
+}
+
 function updatePlots({ day, papers }: { day: string; papers: string[] }) {
   if (day !== plotDay(Date.now())) return;
+  renderer?.setPostMarks(postMarks, day);
   const posts = papers.slice(0, STATIONS.length).flatMap((paper) => {
     const post = decodePaper(paper);
     return post ? [post] : [];
@@ -384,7 +393,7 @@ function isOverworldPost(post: PostData) {
 }
 
 function showPlacement(
-  { id, x, z, landedAt }: PlacedPost,
+  { id, x, z, landedAt, floor }: PlacedPost,
   post: PostData,
   {
     live,
@@ -395,17 +404,26 @@ function showPlacement(
   if (postExpired(landedAt) || post.id !== id) return;
   const existing = worldPosts.get(id);
   if (existing && (!existing.request || request)) return;
-  if (existing?.drop.x === x && existing.drop.z === z) {
+  if (
+    existing?.drop.x === x &&
+    existing.drop.z === z &&
+    (floor === undefined || existing.drop.y === floor)
+  ) {
     existing.request = undefined;
     return;
   }
   existing?.preview?.remove();
   const notice = new PostNotice(post, updateNotice, { card: true, author });
-  let y = Math.max(WATER, ground(x, z));
-  for (const { drop } of worldPosts.values()) {
-    if (drop.id !== id && drop.x === x && drop.z === z)
-      y = Math.max(y, drop.y + DROP_HEIGHT + 0.08);
-  }
+  const y =
+    floor ??
+    nextDropFloor(
+      x,
+      z,
+      [...worldPosts.values()]
+        .map(({ drop }) => drop)
+        .filter((drop) => drop.id !== id)
+        .map((drop) => ({ x: drop.x, z: drop.z, floor: drop.y })),
+    );
   const entry: WorldPost = {
     notice,
     drop: {
@@ -1243,18 +1261,26 @@ function shootOnce() {
     !presence.shoot({ yaw: view.yaw, pitch: view.pitch, kingScale }) &&
     soloCrown
   ) {
-    const eye: ShotPoint = [
-      view.x,
-      view.y + EYE_HEIGHT * (kingScale - 1),
-      view.z,
-    ];
-    const end =
-      soloShark && soloSharkHit(eye, view.yaw, view.pitch, soloShark.pose);
-    if (end && soloShark?.shoot()) {
-      showGunshot({ start: eye, end, impact: true }, true, undefined, true);
-    } else {
-      showGunshot(undefined, true);
-    }
+    const { path, sharkHit } = traceShot(
+      { ...view, y: view.y - EYE_HEIGHT, id: 1 },
+      { type: 'shoot', yaw: view.yaw, pitch: view.pitch, kingScale },
+      [],
+      renderer?.obstacles ?? [],
+      {
+        day: plotDay(Date.now()),
+        stationCount: notices.length,
+        drops: [...worldPosts.values()].map(({ drop, landedAt }) => ({
+          id: drop.id,
+          x: drop.x,
+          z: drop.z,
+          floor: drop.y,
+          landedAt,
+        })),
+        shark: soloShark?.pose,
+      },
+    );
+    if (sharkHit) soloShark?.shoot();
+    showGunshot(path, true, undefined, sharkHit);
   }
 }
 
@@ -1266,6 +1292,9 @@ function showGunshot(
 ) {
   shotEffects.push({ at: performance.now() / 1000, path, ownShot });
   worldAudio.playShot(line, sharkHit);
+  if (isPostMark(path?.postMark)) {
+    updatePostMarks([...postMarks.slice(1 - POST_MARK_LIMIT), path.postMark]);
+  }
 }
 
 function jumpOnce() {
@@ -1580,6 +1609,7 @@ function start() {
   try {
     renderer = createRenderer(world);
     renderer.setStations(notices.map((notice) => notice.canvas));
+    renderer.setPostMarks(postMarks, plotDay(Date.now()));
   } catch (error) {
     console.error(error);
     element('welcome-copy').textContent = 'This browser could not start WebGL.';

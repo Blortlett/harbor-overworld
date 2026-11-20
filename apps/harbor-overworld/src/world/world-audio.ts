@@ -80,7 +80,8 @@ export function createWorldAudio(onBlocked: (blocked: boolean) => void) {
     if (!audio || (audio.state !== 'running' && !resuming)) return;
     const receivedAt = performance.now();
     const when = audio.currentTime + delay;
-    void Promise.all([load(audio, name), resuming]).then(([buffer]) => {
+    const ready = audio.state === 'running' ? undefined : resuming;
+    void Promise.all([load(audio, name), ready]).then(([buffer]) => {
       if (
         !buffer ||
         audio.state !== 'running' ||

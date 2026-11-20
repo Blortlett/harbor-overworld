@@ -563,6 +563,46 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   );
 
   await t.test(
+    'broadcasts paper impacts and replays them for late joiners',
+    async (t) => {
+      const king = connect(t);
+      const { id } = await king.until((m) => m.type === 'welcome');
+      const { crown } = await king.until(
+        (m) => m.type === 'players' && 'x' in m.crown,
+      );
+      king.send({ ...crown, y: ground(crown.x, crown.z), yaw: 0 });
+      await king.until((m) => m.crown?.holder === id);
+      await sleep(100);
+      const atBoard = {
+        x: 0.9,
+        y: ground(0.5, 8.5) + 2.35 - EYE_HEIGHT,
+        z: 13.5,
+        yaw: 0,
+      };
+      king.send(atBoard);
+      await king.until((m) =>
+        m.players?.some((p) => p.id === id && p.z === atBoard.z),
+      );
+      king.send({ type: 'shoot', yaw: 0, pitch: 0, kingScale: 1 });
+      const shot = await king.until(
+        (m) => m.type === 'gunshot' && m.shooter === id,
+      );
+      assert.equal(shot.path.postMark?.kind, 'board');
+      assert.equal(shot.path.postMark.station, 0);
+      assert.equal(shot.path.postMark.side, 1);
+      assert.deepEqual(
+        (await b.until((m) => m.type === 'gunshot' && m.shooter === id)).path
+          .postMark,
+        shot.path.postMark,
+      );
+      const late = connect(t);
+      const { marks } = await late.until((m) => m.type === 'post-marks');
+      assert.deepEqual(marks, [shot.path.postMark]);
+      await king.close();
+    },
+  );
+
+  await t.test(
     'shares the landing immediately and retains it for exactly one minute across restart and the daily reset',
     async () => {
       const location = { x: 0.75, z: 17.25 };
@@ -623,6 +663,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
         id: worldPost.id,
         ...location,
         landedAt: resetTime - 1,
+        floor: Math.max(WATER, ground(location.x, location.z)),
       };
       for (const connection of [a, b]) {
         const message = await connection.until(placed);

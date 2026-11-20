@@ -6,7 +6,8 @@ import {
   LAND_SHARK_SPEED,
   SHARK_WALK_SECONDS,
 } from './land-shark.ts';
-import { soloSharkHit } from './shot-ray.ts';
+import { sharkHitDepth } from './shot-ray.ts';
+import { traceShot } from './shot-trace.ts';
 import { createPlayerMovement, EYE_HEIGHT, WALK_SPEED } from './movement.ts';
 import { replayScenario, scenarios, scenarioView } from './scenarios.ts';
 import {
@@ -16,6 +17,8 @@ import {
   makeTerrain,
   MAX_X,
   WATER,
+  NOTICE,
+  STATIONS,
 } from './terrain.ts';
 
 const { obstacles } = makeTerrain();
@@ -248,12 +251,51 @@ test('the King can hit a swimming shark, which respawns after the scream', () =>
   const start = shark.pose;
   shark.step(0.1, []);
   const origin = [shark.pose.x + 8, shark.pose.y + 1.4, shark.pose.z];
-  assert.ok(soloSharkHit(origin, -Math.PI / 2, 0, shark.pose));
+  assert.ok(sharkHitDepth(origin, [-1, 0, 0], shark.pose, 65));
   assert.ok(shark.shoot());
   assert.equal(shark.pose.dying, true);
-  assert.equal(soloSharkHit(origin, -Math.PI / 2, 0, shark.pose), undefined);
+  assert.equal(sharkHitDepth(origin, [-1, 0, 0], shark.pose, 65), undefined);
   shark.step(0.8, []);
   assert.equal(shark.pose.dying, true);
   shark.step(0.1, []);
   assert.deepEqual(shark.pose, start);
+});
+
+test('shots mark the impacted face of a noticeboard and mark landed posts', () => {
+  const day = '2026-11-20';
+  function shot(x, y, z, yaw, drops = []) {
+    return traceShot(
+      { id: 1, x, y: y - EYE_HEIGHT, z, yaw },
+      { type: 'shoot', yaw, pitch: 0, kingScale: 1 },
+      [],
+      [],
+      { day, stationCount: 3, drops },
+    ).path;
+  }
+  const [x, z] = STATIONS[0];
+  const y = ground(x, z) + NOTICE.bottom + NOTICE.height / 2;
+  const front = shot(x + 0.25, y, z + 2, 0);
+  const back = shot(x + 0.25, y, z - 2, Math.PI);
+  assert.equal(front.postMark.side, 1);
+  assert.equal(back.postMark.side, -1);
+  assert.equal(front.postMark.station, 0);
+  assert.ok(front.postMark.u > 0.5 && back.postMark.u < 0.5);
+
+  const [sx, sz] = STATIONS[2];
+  const sy = ground(sx, sz) + NOTICE.bottom + NOTICE.height / 2;
+  assert.equal(shot(sx - 2, sy, sz, Math.PI / 2).postMark.station, 2);
+
+  const drop = {
+    id: 'aa',
+    x: 20,
+    z: 25,
+    floor: 4,
+    landedAt: Date.now() - 2000,
+  };
+  const impact = shot(20.25, 5, 28, 0, [drop]);
+  assert.equal(impact.postMark.kind, 'drop');
+  assert.equal(impact.postMark.id, drop.id);
+  assert.equal(impact.postMark.u, 0.6);
+  const inFlight = { ...drop, landedAt: Date.now() };
+  assert.equal(shot(20.25, 5, 28, 0, [inFlight]).postMark, undefined);
 });

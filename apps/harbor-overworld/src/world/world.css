@@ -223,11 +223,13 @@ a {
   max-width: min(42vw, 25rem);
   overflow-wrap: anywhere;
 }
-#king-size {
+#king-size,
+#enable-sound {
   min-height: 36px;
   pointer-events: auto;
 }
-#king-size:is(:hover, :focus-visible) {
+#king-size:is(:hover, :focus-visible),
+#enable-sound:is(:hover, :focus-visible) {
   color: var(--gold);
 }
 .network strong {
