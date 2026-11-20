@@ -1,8 +1,15 @@
-import { MAX_X, MAX_Z, MIN_X, MIN_Z } from './terrain.ts';
+import { ground, MAX_X, MAX_Z, MIN_X, MIN_Z } from './terrain.ts';
 
 export const PRESENCE_PATH = '/presence';
 export const PRESENCE_INTERVAL = 100;
 export const ROOM_CAPACITY = 24;
+export const KING_IDENTITY =
+  'cc8ce89f64566ee9efce26d559d50dfd1ef63bb787c5e4d57f1473a0e94d6727';
+export const OVERWORLD_APPLICATION = 'how.justin.harbor-overworld';
+
+export function kingChallenge(nonce: string) {
+  return new TextEncoder().encode(`Harbor Overworld King Mode\n${nonce}`);
+}
 
 export type Pose = {
   x: number;
@@ -38,7 +45,7 @@ export function readChat(value: unknown): ChatPost | undefined {
         : preview.join(''),
   };
 }
-export type Player = NamedPose & { id: number };
+export type Player = NamedPose & { id: number; king?: true };
 
 export function displayName(value: unknown) {
   if (typeof value !== 'string') return undefined;
@@ -49,11 +56,103 @@ export function displayName(value: unknown) {
 }
 
 export type PlotSnapshot = { type: 'plots'; day: string; papers: string[] };
+export type PostLocation = { x: number; z: number };
+export type PlacedPost = PostLocation & {
+  id: string;
+  paper: string;
+  landedAt: number;
+};
+export type Placement = PostLocation & {
+  type: 'place';
+  id: string;
+  proof: string;
+};
+export type PlacementUpdate = {
+  type: 'placements';
+  day: string;
+  posts: PlacedPost[];
+};
 
 export type PresenceMessage =
   | PlotSnapshot
-  | { type: 'welcome'; id: number; slot: number }
+  | PlacementUpdate
+  | { type: 'welcome'; id: number; slot: number; nonce: string }
+  | { type: 'king'; enabled: boolean }
   | { type: 'players'; players: Player[] };
+
+const resetClock = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Chicago',
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  hourCycle: 'h23',
+});
+
+export function plotDay(time: number) {
+  const parts = resetClock.formatToParts(time);
+  const value = (key: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find(({ type }) => type === key)?.value);
+  return new Date(
+    Date.UTC(
+      value('year'),
+      value('month') - 1,
+      value('day') - Number(value('hour') < 3),
+    ),
+  )
+    .toISOString()
+    .slice(0, 10);
+}
+
+export function placementChallenge(id: string, x: number, z: number) {
+  return new TextEncoder().encode(
+    `Harbor Overworld post location\n${JSON.stringify([id, x, z])}`,
+  );
+}
+
+export function isProof(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{128}$/.test(value);
+}
+
+function isPostLocation(
+  value: unknown,
+): value is PostLocation & { id: string } {
+  if (!value || typeof value !== 'object') return false;
+  const { id, x, z } = value as Partial<Placement>;
+  return (
+    typeof id === 'string' &&
+    /^(?:[a-f0-9]{2}){1,200}$/.test(id) &&
+    typeof x === 'number' &&
+    x >= MIN_X &&
+    x < MAX_X &&
+    typeof z === 'number' &&
+    z >= MIN_Z &&
+    z < MAX_Z &&
+    ground(x, z) >= 2
+  );
+}
+
+export function isPlacement(value: unknown): value is Placement {
+  return (
+    isPostLocation(value) &&
+    'type' in value &&
+    value.type === 'place' &&
+    'proof' in value &&
+    isProof(value.proof)
+  );
+}
+
+export function isPlacedPost(value: unknown): value is PlacedPost {
+  if (!isPostLocation(value)) return false;
+  const { paper, landedAt } = value as Partial<PlacedPost>;
+  return (
+    typeof paper === 'string' &&
+    paper.length > 0 &&
+    paper.length <= 16 * 1024 &&
+    typeof landedAt === 'number' &&
+    Number.isFinite(landedAt)
+  );
+}
 
 export function parseMessage(text: string): unknown {
   try {

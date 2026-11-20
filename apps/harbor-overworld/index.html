@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#101712" />
     <meta name="description" content="Walk the coast, find live Harbor posts, and publish from the world." />
     <title>Harbor Overworld</title>
@@ -21,12 +21,16 @@
           <div id="compass-track"></div><i></i>
         </div>
         <div class="world-status">
-          <button type="button" class="network plate" id="refresh" aria-label="Refresh live posts">
-            <span class="network-lamp" id="network-lamp"></span>
-            <span><strong id="network-name">CONNECTING</strong><small id="network-detail">Harbor feed</small></span>
-            <span class="refresh-icon" aria-hidden="true">↻</span>
-          </button>
+          <div class="world-tools">
+            <button type="button" class="network plate" id="refresh" aria-label="Refresh live posts">
+              <span class="network-lamp" id="network-lamp"></span>
+              <span><strong id="network-name">CONNECTING</strong><small id="network-detail">Harbor feed</small></span>
+              <span class="refresh-icon" aria-hidden="true">↻</span>
+            </button>
+            <button type="button" class="fullscreen plate" id="fullscreen" aria-label="Enter fullscreen" title="Enter fullscreen" hidden><span class="fullscreen-icon" aria-hidden="true"></span></button>
+          </div>
           <p class="room-status plate" id="room-status" role="status" hidden></p>
+          <p class="room-status plate" id="fullscreen-status" role="status" hidden></p>
         </div>
       </header>
       <span class="crosshair" id="crosshair" aria-hidden="true"></span>
@@ -40,6 +44,7 @@
         <p class="eyebrow"><span></span> THE COAST</p>
         <h1>Harbor<br /><em>Overworld</em></h1>
         <p class="welcome-copy" id="welcome-copy">Follow the lights to read live Harbor posts.</p>
+        <p class="touch-help">Use the stick to walk. Drag the landscape to look.</p>
         <form id="welcome-identity" class="welcome-identity">
           <label for="welcome-name">New to Harbor? Pick a display name</label>
           <input id="welcome-name" maxlength="50" autocomplete="nickname" placeholder="Name (optional)" />
@@ -55,8 +60,14 @@
           <a href="https://github.com/SomewhatJustin/harbor-overworld" target="_blank" rel="noopener">Source on GitHub</a>
         </p>
       </section>
-      <p class="self-chat plate" id="self-chat" hidden></p>
       <p class="toast plate" id="toast" role="status" hidden></p>
+      <fieldset class="touch-controls" aria-label="Touch game controls">
+        <div class="move-stick plate" id="move-stick" aria-hidden="true"><span id="move-thumb"></span></div>
+        <div class="touch-actions">
+          <button type="button" class="plate" id="touch-jump">Jump</button>
+          <button type="button" class="plate" id="touch-chat">Chat</button>
+        </div>
+      </fieldset>
       <footer class="hud-bottom">
         <fieldset class="controls plate" aria-label="Game controls">
           <div class="control-row"><span class="key-group"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>Move</span></div>
@@ -78,8 +89,8 @@
         <p class="metadata" id="chat-context">Publishes to Harbor as a public post.</p>
         <form id="chat-form">
           <label class="visually-hidden" for="draft">Post text</label>
-          <textarea id="draft" rows="4" placeholder="What’s on your mind?"></textarea>
-          <div class="panel-actions"><button type="submit" class="primary" id="send"><span id="send-label">Publish</span> <span aria-hidden="true">↵</span></button><span class="metadata">Shift+Enter for a new line</span></div>
+          <textarea id="draft" rows="4" placeholder="What’s on your mind?" enterkeyhint="send"></textarea>
+          <div class="panel-actions"><button type="submit" class="primary" id="send"><span id="send-label">Publish</span> <span aria-hidden="true">↵</span></button><span class="metadata keyboard-help">Shift+Enter for a new line</span></div>
         </form>
         <form id="identity-form" hidden>
           <label for="identity-name">Display name</label>

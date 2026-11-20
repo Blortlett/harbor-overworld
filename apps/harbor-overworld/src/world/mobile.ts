@@ -1,0 +1,184 @@
+type TouchCallbacks = {
+  hasStarted(): boolean;
+  handleLook(deltaX: number, deltaY: number): void;
+  jump(): void;
+  openChat(): void;
+};
+
+type WebKitDocument = Document & {
+  webkitFullscreenEnabled?: boolean;
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?(): void;
+};
+
+type WebKitElement = HTMLElement & { webkitRequestFullscreen?(): void };
+
+function control<T extends HTMLElement>(game: HTMLElement, selector: string) {
+  const element = game.querySelector<T>(selector);
+  if (!element) throw new Error(`Missing Overworld control ${selector}`);
+  return element;
+}
+
+function bindFullscreen(game: HTMLElement) {
+  const button = control<HTMLButtonElement>(game, '#fullscreen');
+  const status = control(game, '#fullscreen-status');
+  const page: WebKitDocument = document;
+  const target: WebKitElement = game;
+  const standard = page.fullscreenEnabled && !!target.requestFullscreen;
+  const webkit =
+    page.webkitFullscreenEnabled && !!target.webkitRequestFullscreen;
+  if (!standard && !webkit) return;
+
+  button.hidden = false;
+  const fullElement = () =>
+    standard ? page.fullscreenElement : page.webkitFullscreenElement;
+
+  function showStatus() {
+    const fullscreen = fullElement() === game;
+    const label = fullscreen ? 'Exit fullscreen' : 'Enter fullscreen';
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.dataset.fullscreen = String(fullscreen);
+    status.hidden = true;
+  }
+
+  function showError() {
+    status.textContent = 'Fullscreen is unavailable right now.';
+    status.hidden = false;
+  }
+
+  page.addEventListener(
+    standard ? 'fullscreenchange' : 'webkitfullscreenchange',
+    showStatus,
+  );
+  page.addEventListener(
+    standard ? 'fullscreenerror' : 'webkitfullscreenerror',
+    showError,
+  );
+  button.addEventListener('click', async () => {
+    try {
+      if (fullElement() === game) {
+        if (standard) await page.exitFullscreen();
+        else page.webkitExitFullscreen?.();
+      } else if (standard) {
+        await target.requestFullscreen();
+      } else {
+        target.webkitRequestFullscreen?.();
+      }
+    } catch {
+      showError();
+    }
+  });
+}
+
+export function bindMobileControls(
+  game: HTMLElement,
+  world: HTMLCanvasElement,
+  { hasStarted, handleLook, jump, openChat }: TouchCallbacks,
+) {
+  const stick = control(game, '#move-stick');
+  const thumb = control(game, '#move-thumb');
+  const jumpButton = control(game, '#touch-jump');
+  const chatButton = control(game, '#touch-chat');
+  const movement = { forward: 0, sideways: 0 };
+  let movePointer: number | undefined;
+  let lookPointer: { id: number; x: number; y: number } | undefined;
+
+  function resetMovement() {
+    const pointer = movePointer;
+    movePointer = undefined;
+    movement.forward = 0;
+    movement.sideways = 0;
+    thumb.style.removeProperty('translate');
+    if (pointer !== undefined && stick.hasPointerCapture(pointer))
+      stick.releasePointerCapture(pointer);
+  }
+
+  function resetLook() {
+    const pointer = lookPointer;
+    lookPointer = undefined;
+    if (pointer && world.hasPointerCapture(pointer.id))
+      world.releasePointerCapture(pointer.id);
+  }
+
+  function reset() {
+    resetMovement();
+    resetLook();
+  }
+
+  function move(event: PointerEvent) {
+    if (event.pointerId !== movePointer) return;
+    const { left, top, width, height } = stick.getBoundingClientRect();
+    const x = event.clientX - left - width / 2;
+    const y = event.clientY - top - height / 2;
+    const distance = Math.hypot(x, y);
+    const radius = Math.min(width, height) * 0.28;
+    const unitX = distance > 0 ? x / distance : 0;
+    const unitY = distance > 0 ? y / distance : 0;
+    const offset = Math.min(distance, radius);
+    const strength = Math.max(0, (offset / radius - 0.13) / 0.87);
+    movement.sideways = unitX * strength;
+    movement.forward = -unitY * strength;
+    thumb.style.translate = `${unitX * offset}px ${unitY * offset}px`;
+  }
+
+  stick.addEventListener('pointerdown', (event) => {
+    if (!hasStarted() || movePointer !== undefined || event.button !== 0)
+      return;
+    movePointer = event.pointerId;
+    stick.setPointerCapture(movePointer);
+    move(event);
+  });
+  stick.addEventListener('pointermove', move);
+
+  world.addEventListener('pointerdown', (event) => {
+    if (!hasStarted() || event.pointerType === 'mouse' || lookPointer) return;
+    lookPointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    world.setPointerCapture(event.pointerId);
+  });
+  world.addEventListener('pointermove', (event) => {
+    if (lookPointer?.id !== event.pointerId) return;
+    handleLook(
+      (event.clientX - lookPointer.x) * 2.5,
+      (event.clientY - lookPointer.y) * 2.5,
+    );
+    lookPointer.x = event.clientX;
+    lookPointer.y = event.clientY;
+  });
+  for (const type of [
+    'pointerup',
+    'pointercancel',
+    'lostpointercapture',
+  ] as const) {
+    stick.addEventListener(type, ({ pointerId }) => {
+      if (pointerId === movePointer) resetMovement();
+    });
+    world.addEventListener(type, ({ pointerId }) => {
+      if (pointerId === lookPointer?.id) resetLook();
+    });
+  }
+
+  const coarse = matchMedia('(pointer: coarse)');
+  game.classList.toggle('touch-input', coarse.matches);
+  coarse.addEventListener('change', ({ matches }) => {
+    game.classList.toggle('touch-input', matches);
+    reset();
+  });
+  game.addEventListener(
+    'pointerdown',
+    ({ pointerType }) => {
+      game.classList.toggle(
+        'touch-input',
+        coarse.matches || pointerType === 'touch' || pointerType === 'pen',
+      );
+    },
+    { capture: true },
+  );
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) reset();
+  });
+  jumpButton.addEventListener('click', jump);
+  chatButton.addEventListener('click', openChat);
+  bindFullscreen(game);
+  return { movement, reset };
+}

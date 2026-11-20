@@ -4,6 +4,7 @@
 import type { PolycentricClient } from '@polycentric/js-core';
 import { COLLECTION, v2 } from '@polycentric/js-core';
 import { version } from '../../package.json';
+import { OVERWORLD_APPLICATION } from '../world/presence-protocol';
 import { type PostData, decodePostBundle, eventKeyFromId } from './posts';
 
 export const MAX_POST_LENGTH = 2000;
@@ -22,7 +23,7 @@ export type NewPostInput = {
 export async function createPost(
   client: PolycentricClient,
   input: NewPostInput,
-): Promise<PostData> {
+) {
   if (!client.activeIdentityKey) {
     throw new Error('Choose an identity before you post.');
   }
@@ -48,21 +49,25 @@ export async function createPost(
     collection: COLLECTION.FEED,
     application: {
       name: 'Harbor Overworld',
-      id: 'how.justin.harbor-overworld',
+      id: OVERWORLD_APPLICATION,
       version,
       url: 'https://github.com/SomewhatJustin/harbor-overworld',
     },
     content: v2.Content.create({ contentBody: { oneofKind: 'post', post } }),
   });
 
-  const decoded = decodePostBundle(
-    v2.EventBundle.create({
-      signedEvent,
-      serializedContent: { contentBytes },
-    }),
-  );
+  const bundle = v2.EventBundle.create({
+    signedEvent,
+    serializedContent: { contentBytes },
+  });
+  const decoded = decodePostBundle(bundle);
   if (!decoded) {
     throw new Error('The new post could not be read back.');
   }
-  return decoded;
+  const paper = btoa(
+    Array.from(v2.EventBundle.toBinary(bundle), (byte) =>
+      String.fromCharCode(byte),
+    ).join(''),
+  );
+  return { post: decoded, paper };
 }

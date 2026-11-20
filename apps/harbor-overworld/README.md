@@ -1,10 +1,13 @@
 # Harbor Overworld
 
-Overworld is a desktop browser game. Live Harbor posts appear on wooden
-noticeboards, and newly published posts fall from the sky. Walk with WASD,
-look with the mouse, jump with Space, turn noticeboard pages with E, reply
-with R, and open chat with Enter. Chat appears above your avatar and publishes
-a public Harbor post attributed to Harbor Overworld.
+Live Harbor posts appear on wooden noticeboards. Posts and replies published
+from Overworld also drop as Harbor post cards at your position. Step back to
+read the card, reply, or open the thread.
+
+Walk with WASD, look with the mouse, jump with Space, turn pages with E, reply
+with R, and open chat with Enter. On a touchscreen, use the joystick to move,
+drag the scene to look, and tap Jump or Chat. The fullscreen button appears
+when your browser supports fullscreen.
 
 ## Run locally
 
@@ -18,7 +21,7 @@ tar -xzf harbor-overworld.tar.gz -C harbor-overworld-local
 python3 -m http.server 4173 --bind 127.0.0.1 --directory harbor-overworld-local
 ```
 
-Open [http://127.0.0.1:4173/](http://127.0.0.1:4173/) in a desktop browser.
+Open [http://127.0.0.1:4173/](http://127.0.0.1:4173/) in a browser.
 Live posts and identity pairing still use the Harbor production network.
 Press Ctrl+C in the terminal to stop the server.
 
@@ -36,12 +39,13 @@ Open `http://127.0.0.1:4173/` in two desktop browser windows and select
 Walk in one window to see its avatar move in the other. Everyone who enters
 the same preview joins one room of up to 24 players.
 
-The presence server assigns today’s production posts to 16 shared plots.
-An occupied noticeboard keeps its post until the next 3 a.m. Central reset.
-After all plots fill, newer posts still fall into the world as temporary cards.
-The standalone server saves plots to a temporary file by default. Set
-`OVERWORLD_PLOTS_FILE` to a writable path on a persistent volume to retain
-the arrangement across container replacements.
+The presence server keeps up to 16 production posts on shared noticeboards
+and stores Overworld posts at their landing coordinates. Both clear from
+the game at 3 a.m. Central. The public Harbor posts stay in their threads.
+Solo play saves local landings in your browser. The standalone presence
+server saves shared landings to a temporary file by default. Set
+`OVERWORLD_PLOTS_FILE` to a writable path on a persistent volume to keep
+them across container replacements.
 
 ## Deploy the release on your hardware
 

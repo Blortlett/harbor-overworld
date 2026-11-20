@@ -1,4 +1,4 @@
-import { avatarMesh, coatIndex, COATS, nameplate } from './avatar';
+import { avatarMesh, coatIndex, COATS, crownMesh, nameplate } from './avatar';
 import type { Avatar } from './presence';
 import {
   ground,
@@ -21,6 +21,12 @@ export type View = {
   pitch: number;
 };
 export const EYE_HEIGHT = 1.64;
+export const DROP_DURATION = 1.2;
+export const DROP_HEIGHT = 1.75;
+export const DROP_HALF_WIDTH = 1.25;
+export const DROP_BASE = 0.025;
+const DROP_DRAW_RANGE = 40;
+
 export type FallingPost = {
   id: string;
   x: number;
@@ -88,6 +94,7 @@ const worldVertex = `
     uniform vec3 avatarOrigin;
     uniform vec2 avatarRotation;
     uniform float avatarStep;
+    uniform float avatarScale;
   #endif
   void main() {
     vec3 p = point;
@@ -99,7 +106,7 @@ const worldVertex = `
       }
       p.xz = vec2(avatarRotation.x * p.x - avatarRotation.y * p.z,
                   avatarRotation.y * p.x + avatarRotation.x * p.z);
-      p += avatarOrigin;
+      p = p * avatarScale + avatarOrigin;
     #endif
     vec3 relative = p - eye;
     float depth = dot(relative, forward);
@@ -175,8 +182,9 @@ const noticeFragment = `
     float distance = length(relative);
     vec3 fog = mix(horizon(relative), vec3(.38,.53,.52), .42);
     float mist = (1.0 - exp(-distance * .0105)) * .84;
-    vec3 ink = texture2D(paper, uv).rgb;
-    gl_FragColor = vec4(mix(ink, fog, mist), 1.0);
+    vec4 ink = texture2D(paper, uv);
+    if (ink.a < .5) discard;
+    gl_FragColor = vec4(mix(ink.rgb, fog, mist), 1.0);
   }
 `;
 
@@ -231,13 +239,14 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     string,
     { name: string; texture: WebGLTexture; halfWidth: number }
   >();
-  const avatarMeshes = COATS.map((_, index) => {
-    const data = avatarMesh(index);
-    const buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  function uploadMesh(data: Float32Array) {
+    const buffer = context.createBuffer();
+    context.bindBuffer(context.ARRAY_BUFFER, buffer);
+    context.bufferData(context.ARRAY_BUFFER, data, context.STATIC_DRAW);
     return { buffer, count: data.length / 7 };
-  });
+  }
+  const avatarMeshes = COATS.map((_, index) => uploadMesh(avatarMesh(index)));
+  const crown = uploadMesh(crownMesh());
   const noticeTextures: WebGLTexture[] = [];
   let stationVertices = 0;
   gl.bindBuffer(gl.ARRAY_BUFFER, screen);
@@ -265,6 +274,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const avatarOrigin = gl.getUniformLocation(avatarProgram, 'avatarOrigin');
   const avatarRotation = gl.getUniformLocation(avatarProgram, 'avatarRotation');
   const avatarStep = gl.getUniformLocation(avatarProgram, 'avatarStep');
+  const avatarScale = gl.getUniformLocation(avatarProgram, 'avatarScale');
   const avatarTime = gl.getUniformLocation(avatarProgram, 'time');
   const noticeUniforms = uniformLocations(noticeProgram);
   const timeUniform = gl.getUniformLocation(worldProgram, 'time');
@@ -340,6 +350,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   return {
     obstacles,
     setNotice,
+    setDrop(id: string, image: HTMLCanvasElement) {
+      const texture = dropTextures.get(id);
+      if (texture) uploadTexture(texture, image);
+    },
     setStations(pages: readonly HTMLCanvasElement[]) {
       const mesh = makeStations(pages.length);
       stationVertices = mesh.length / 7;
@@ -421,7 +435,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       for (const attr of worldAttributes) gl.disableVertexAttribArray(attr);
 
       const visible = avatars.filter(
-        ({ x, z }) => Math.hypot(x - view.x, z - view.z) >= 0.55,
+        ({ x, z, king }) =>
+          Math.hypot(x - view.x, z - view.z) >= (king ? 1.1 : 0.55),
       );
       if (visible.length) {
         gl.useProgram(avatarProgram);
@@ -431,6 +446,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         for (const avatar of visible) {
           const model = avatarMeshes[coatIndex(avatar.id)];
           gl.uniform3f(avatarOrigin, avatar.x, avatar.y, avatar.z);
+          gl.uniform1f(avatarScale, avatar.king ? 2 : 1);
           gl.uniform2f(
             avatarRotation,
             Math.cos(avatar.yaw),
@@ -441,6 +457,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
             avatar.walking ? Math.sin(time * 14 + avatar.id) * 0.18 : 0,
           );
           mesh(model.buffer, model.count, avatarAttributes);
+          if (avatar.king) mesh(crown.buffer, crown.count, avatarAttributes);
         }
         for (const attr of avatarAttributes) gl.disableVertexAttribArray(attr);
       }
@@ -456,7 +473,12 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           nameTextures.delete(key);
         }
       }
-      const activeDrops = new Set(drops.map((drop) => drop.id));
+      const visibleDrops = drops.filter(
+        (drop) =>
+          time >= drop.start &&
+          Math.hypot(drop.x - view.x, drop.z - view.z) < DROP_DRAW_RANGE,
+      );
+      const activeDrops = new Set(visibleDrops.map((drop) => drop.id));
       for (const [key, texture] of dropTextures) {
         if (!activeDrops.has(key)) {
           gl.deleteTexture(texture);
@@ -466,7 +488,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       const nearby = visible.filter(
         ({ x, z }) => Math.hypot(x - view.x, z - view.z) < 17,
       );
-      if (noticeTextures.length || nearby.length || drops.length) {
+      if (noticeTextures.length || nearby.length || visibleDrops.length) {
         gl.useProgram(noticeProgram);
         camera(noticeUniforms);
         gl.bindBuffer(gl.ARRAY_BUFFER, noticeFaces);
@@ -536,6 +558,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         }
 
         for (const avatar of nearby) {
+          const labelY = avatar.y + (avatar.king ? 3.64 : 1.63);
           const label = nameTexture(
             String(avatar.id),
             avatar.id,
@@ -546,7 +569,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
               label.texture,
               avatar.x,
               avatar.z,
-              avatar.y + 1.63,
+              labelY,
               label.halfWidth,
               0.225,
             );
@@ -561,14 +584,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
                 chat.texture,
                 avatar.x,
                 avatar.z,
-                avatar.y + 1.93,
+                labelY + 0.3,
                 Math.max(chat.halfWidth, 0.72),
                 0.29,
               );
           }
         }
-        for (const drop of drops) {
-          if (time < drop.start) continue;
+        for (const drop of visibleDrops) {
           let texture = dropTextures.get(drop.id);
           if (!texture) {
             texture = createTexture() ?? undefined;
@@ -576,16 +598,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
             uploadTexture(texture, drop.paper);
             dropTextures.set(drop.id, texture);
           }
-          const progress = Math.min(1, (time - drop.start) / 1.7);
-          const elevation = 10 * (1 - progress * progress);
-          const height = drop.paper.height > 32 ? 1.45 : 0.28;
+          const progress = Math.min(1, (time - drop.start) / DROP_DURATION);
+          const elevation = 12 * (1 - progress * progress);
           billboard(
             texture,
             drop.x,
             drop.z,
-            drop.y + 0.12 + elevation,
-            1.06,
-            height,
+            drop.y + DROP_BASE + elevation,
+            DROP_HALF_WIDTH,
+            DROP_HEIGHT,
           );
         }
         gl.disableVertexAttribArray(noticePoint);
@@ -608,11 +629,16 @@ export function walk(
   dt: number,
   obstacles: readonly Obstacle[],
   stations: number,
+  touch?: Readonly<{ forward: number; sideways: number }>,
 ) {
-  const forward = Number(keys.has('KeyW')) - Number(keys.has('KeyS'));
-  const sideways = Number(keys.has('KeyD')) - Number(keys.has('KeyA'));
+  const forward =
+    Number(keys.has('KeyW')) - Number(keys.has('KeyS')) + (touch?.forward ?? 0);
+  const sideways =
+    Number(keys.has('KeyD')) -
+    Number(keys.has('KeyA')) +
+    (touch?.sideways ?? 0);
   if (forward || sideways) {
-    const speed = (4.7 * dt) / Math.hypot(forward, sideways);
+    const speed = (4.7 * dt) / Math.max(1, Math.hypot(forward, sideways));
     const dx =
       (Math.sin(view.yaw) * forward + Math.cos(view.yaw) * sideways) * speed;
     const dz =

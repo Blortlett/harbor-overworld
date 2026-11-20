@@ -7,35 +7,27 @@ import {
 } from '../../../packages/js-core/src/proto/polycentric/v2/events.ts';
 import { EventKey } from '../../../packages/js-core/src/proto/polycentric/v2/event_key.ts';
 import { FeedsServiceClient } from '../../../packages/js-core/src/proto/polycentric/v2/feeds.client.ts';
+import { KeyType } from '../../../packages/js-core/src/proto/polycentric/v2/keypair.ts';
 import { SortPostsBy } from '../../../packages/js-core/src/proto/polycentric/v2/search.ts';
-import type { PlotSnapshot } from '../src/world/presence-protocol.ts';
+import {
+  isPlacedPost,
+  OVERWORLD_APPLICATION,
+  type PlacedPost,
+  type Placement,
+  placementChallenge,
+  type PlotSnapshot,
+  plotDay,
+} from '../src/world/presence-protocol.ts';
 import { STATIONS } from '../src/world/terrain.ts';
+import { verifyProof } from './signature.ts';
 
-const clock = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/Chicago',
-  year: 'numeric',
-  month: 'numeric',
-  day: 'numeric',
-  hour: 'numeric',
-  hourCycle: 'h23',
-});
-const sources = ['https://srv.harbor.social', 'https://srv.polycentric.io'];
-const capacity = STATIONS.length;
-
-export function plotDay(time: number) {
-  const parts = clock.formatToParts(time);
-  const value = (key: Intl.DateTimeFormatPartTypes) =>
-    Number(parts.find(({ type }) => type === key)?.value);
-  return new Date(
-    Date.UTC(
-      value('year'),
-      value('month') - 1,
-      value('day') - Number(value('hour') < 3),
+const feeds = ['https://srv.harbor.social', 'https://srv.polycentric.io'].map(
+  (baseUrl) =>
+    new FeedsServiceClient(
+      new GrpcWebFetchTransport({ baseUrl, format: 'binary' }),
     ),
-  )
-    .toISOString()
-    .slice(0, 10);
-}
+);
+const capacity = STATIONS.length;
 
 function readCandidates(bundles: EventBundle[], day: string, now: number) {
   const posts = [];
@@ -49,11 +41,13 @@ function readCandidates(bundles: EventBundle[], day: string, now: number) {
       const { contentBody } = Content.fromBinary(
         bundle.serializedContent.contentBytes,
       );
-      if (contentBody.oneofKind !== 'post' || contentBody.post.reply) continue;
+      if (contentBody.oneofKind !== 'post') continue;
       const paper = EventBundle.toBinary(bundle);
       if (paper.byteLength > 12 * 1024) continue;
       posts.push({
         id: Buffer.from(EventKey.toBinary(event.key)).toString('hex'),
+        application: event.application?.id,
+        reply: !!contentBody.post.reply,
         time,
         paper: Buffer.from(paper).toString('base64'),
       });
@@ -67,9 +61,12 @@ function readCandidates(bundles: EventBundle[], day: string, now: number) {
 export function createPlots(
   file: string | undefined,
   broadcast: (snapshot: PlotSnapshot) => void,
+  placed: (day: string, post: PlacedPost) => void,
 ) {
   let day = plotDay(Date.now());
   let plots = new Map<string, string>();
+  const placements = new Map<string, PlacedPost>();
+  const checking = new Set<string>();
   let ready = false;
   if (file) {
     try {
@@ -77,6 +74,10 @@ export function createPlots(
       if (state.day === day && Array.isArray(state.plots)) {
         plots = new Map(state.plots.slice(0, capacity));
         ready = true;
+      }
+      if (state.day === day && Array.isArray(state.placements)) {
+        for (const post of state.placements)
+          if (isPlacedPost(post)) placements.set(post.id, post);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
@@ -88,48 +89,100 @@ export function createPlots(
     if (ready) return { type: 'plots', day, papers: [...plots.values()] };
   }
 
-  function changed() {
-    if (file && ready) {
+  function save() {
+    if (file) {
       try {
         writeFileSync(
           `${file}.tmp`,
-          JSON.stringify({ day, plots: [...plots] }),
+          JSON.stringify({
+            day,
+            plots: [...plots],
+            placements: [...placements.values()],
+          }),
         );
         renameSync(`${file}.tmp`, file);
       } catch (error) {
         console.warn('Could not save Overworld plots:', error);
       }
     }
-    const state = snapshot();
-    if (state) broadcast(state);
   }
 
-  let polling = false;
-  async function poll() {
-    const now = Date.now();
+  function reset(now = Date.now()) {
     const current = plotDay(now);
     if (day !== current) {
       day = current;
       plots.clear();
-      changed();
+      placements.clear();
+      save();
+      broadcast({ type: 'plots', day, papers: [] });
     }
+  }
+
+  async function place({ id, x, z, proof }: Placement) {
+    const now = Date.now();
+    reset(now);
+    const existing = placements.get(id);
+    if (existing) return existing;
+    if (checking.has(id) || checking.size >= 24) return;
+    checking.add(id);
+    const current = day;
+    try {
+      const key = EventKey.fromBinary(Buffer.from(id, 'hex'));
+      if (
+        key.signedBy?.keyType !== KeyType.ED25519 ||
+        !verifyProof(key.signedBy.key, placementChallenge(id, x, z), proof)
+      )
+        return;
+      const post = await Promise.any(
+        feeds.map(async (feed) => {
+          const response = await feed.getPost(
+            { identity: key.identity, sequence: key.sequence, omitLabels: [] },
+            { timeout: 6000 },
+          ).response;
+          const candidate = readCandidates(
+            response.candidates,
+            current,
+            Date.now(),
+          ).find(
+            (item) =>
+              item.id === id && item.application === OVERWORLD_APPLICATION,
+          );
+          if (!candidate) throw new Error('Overworld post is not indexed yet.');
+          return candidate;
+        }),
+      );
+      reset();
+      if (day !== current) return;
+      const placement = { id, x, z, paper: post.paper, landedAt: Date.now() };
+      placements.set(id, placement);
+      save();
+      placed(day, placement);
+    } catch {
+      // The publisher retries while the production servers index the post.
+    } finally {
+      checking.delete(id);
+    }
+  }
+
+  let polling = false;
+  async function poll() {
+    reset();
+    const current = day;
     if (polling || plots.size >= capacity) return;
     polling = true;
     try {
       const response = await Promise.any(
-        sources.map(async (baseUrl) => {
-          const feed = new FeedsServiceClient(
-            new GrpcWebFetchTransport({ baseUrl, format: 'binary' }),
-          );
-          return feed.getExploreFeed(
-            {
-              pageParams: { limit: 50 },
-              omitLabels: [],
-              sortBy: SortPostsBy.LATEST,
-            },
-            { timeout: 6000 },
-          ).response;
-        }),
+        feeds.map(
+          (feed) =>
+            feed.getExploreFeed(
+              {
+                pageParams: { limit: 50 },
+                omitLabels: [],
+                sortBy: SortPostsBy.LATEST,
+              },
+              { timeout: 6000 },
+            ).response,
+        ),
       );
       if (day !== current || plotDay(Date.now()) !== current) return;
       const before = plots.size;
@@ -139,11 +192,15 @@ export function createPlots(
         Date.now(),
       )) {
         if (plots.size >= capacity) break;
+        if (post.reply || post.application === OVERWORLD_APPLICATION) continue;
         if (!plots.has(post.id)) plots.set(post.id, post.paper);
       }
       const first = !ready;
       ready = true;
-      if (first || plots.size !== before) changed();
+      if (first || plots.size !== before) {
+        save();
+        broadcast({ type: 'plots', day, papers: [...plots.values()] });
+      }
     } catch (error) {
       console.warn('Could not refresh Overworld plots:', error);
     } finally {
@@ -154,5 +211,13 @@ export function createPlots(
   void poll();
   const timer = setInterval(() => void poll(), 12_000);
   timer.unref();
-  return { snapshot, close: () => clearInterval(timer) };
+  return {
+    snapshot,
+    placements() {
+      reset();
+      return { day, posts: placements.values() };
+    },
+    place,
+    close: () => clearInterval(timer),
+  };
 }

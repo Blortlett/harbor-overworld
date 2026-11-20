@@ -14,6 +14,8 @@ const LINES_PER_PAGE = 10;
 const BODY_FONT = '500 30px system-ui, sans-serif';
 const DATE = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const CARD_INK = '#262a32';
+const CARD_MUTED = '#5d6576';
 
 type NoticePage =
   | { kind: 'text'; lines: string[] }
@@ -104,28 +106,59 @@ function makePaper() {
 
 let paper: HTMLCanvasElement | undefined;
 
+function imageUrls(set: PostData['images'][number] | null, width: number) {
+  const digest = pickImageVariant(set, width)?.blob?.digest;
+  if (!digest) return [];
+  const key = toDigestKey(digest);
+  return HARBOR_PRODUCTION_SERVERS.map((server) => `${server}/blob/${key}`);
+}
+
+function loadImage(
+  urls: readonly string[],
+  loaded: (image: HTMLImageElement) => void,
+  missing?: () => void,
+) {
+  const image = new Image();
+  image.crossOrigin = 'anonymous';
+  image.onload = () => loaded(image);
+  let attempt = 0;
+  function next() {
+    const url = urls[attempt++];
+    if (url) image.src = url;
+    else missing?.();
+  }
+  image.onerror = next;
+  next();
+}
+
+function shortIdentity(identity: string) {
+  return identity.length > 14
+    ? `${identity.slice(0, 6)}…${identity.slice(-6)}`
+    : identity;
+}
+
 export class PostNotice {
   readonly canvas = document.createElement('canvas');
   private readonly context: CanvasRenderingContext2D;
   private readonly pages: NoticePage[] = [];
   private readonly date: string;
   private author: string;
+  private avatar?: HTMLImageElement;
+  private replyAuthor?: string;
   private authorRequested = false;
   private index = 0;
 
   constructor(
     readonly post: PostData,
     private readonly onChange: (notice: PostNotice) => void,
+    private readonly options: { card?: boolean; author?: string } = {},
   ) {
     this.canvas.width = WIDTH;
     this.canvas.height = HEIGHT;
     const context = this.canvas.getContext('2d');
     if (!context) throw new Error('Could not prepare a Harbor notice.');
     this.context = context;
-    this.author =
-      post.identity.length > 14
-        ? `${post.identity.slice(0, 6)}…${post.identity.slice(-6)}`
-        : post.identity;
+    this.author = options.author || shortIdentity(post.identity);
     const created = new Date(post.createdAt);
     this.date =
       post.createdAt && Number.isFinite(created.getTime())
@@ -142,15 +175,8 @@ export class PostNotice {
       }
     }
     for (const set of post.images) {
-      const digest = pickImageVariant(set, WIDTH)?.blob?.digest;
-      if (!digest) continue;
-      const key = toDigestKey(digest);
-      this.pages.push({
-        kind: 'image',
-        urls: HARBOR_PRODUCTION_SERVERS.map(
-          (server) => `${server}/blob/${key}`,
-        ),
-      });
+      const urls = imageUrls(set, WIDTH);
+      if (urls.length) this.pages.push({ kind: 'image', urls });
     }
     if (this.pages.length === 0) {
       this.pages.push({
@@ -169,7 +195,15 @@ export class PostNotice {
     const page = this.pages[this.index];
     const content =
       page.kind === 'text' ? page.lines.join('\n') : 'Attached image';
-    return `${this.author}. ${this.date}. Page ${this.index + 1} of ${this.pageCount}. ${content}`;
+    const reply = this.replyDescription;
+    return `${this.author}. ${this.date}. ${reply ? `${reply}. ` : ''}Page ${this.index + 1} of ${this.pageCount}. ${content}`;
+  }
+
+  private get replyDescription() {
+    if (!this.options.card || !this.post.reply) return '';
+    const identity = this.post.reply.parentIdentity;
+    const author = this.replyAuthor ?? (identity && shortIdentity(identity));
+    return `Replying to ${author || 'a Harbor post'}`;
   }
 
   turn(client: PolycentricClient, backwards = false) {
@@ -184,32 +218,42 @@ export class PostNotice {
     if (!this.authorRequested) {
       this.authorRequested = true;
       void loadProfile(client, this.post.identity)
-        .then(({ name }) => {
-          if (!name) return;
-          this.author = name;
-          this.changed();
+        .then(({ name, avatar }) => {
+          if (name) {
+            this.author = name;
+            this.changed();
+          }
+          if (this.options.card && avatar)
+            loadImage(imageUrls(avatar, 64), (image) => {
+              this.avatar = image;
+              this.changed();
+            });
         })
         .catch(() => undefined);
+      const parent = this.post.reply?.parentIdentity;
+      if (this.options.card && parent)
+        void loadProfile(client, parent)
+          .then(({ name }) => {
+            if (!name) return;
+            this.replyAuthor = name;
+            this.changed();
+          })
+          .catch(() => undefined);
     }
     const page = this.pages[this.index];
     if (page.kind !== 'image' || page.requested) return;
     page.requested = true;
-    const image = new Image();
-    image.crossOrigin = 'anonymous';
-    image.onload = () => {
-      page.image = image;
-      if (this.pages[this.index] === page) this.changed();
-    };
-    let attempt = 0;
-    image.onerror = () => {
-      const next = page.urls[attempt++];
-      if (next) image.src = next;
-      else {
+    loadImage(
+      page.urls,
+      (image) => {
+        page.image = image;
+        if (this.pages[this.index] === page) this.changed();
+      },
+      () => {
         page.missing = true;
         if (this.pages[this.index] === page) this.changed();
-      }
-    };
-    image.src = page.urls[attempt++];
+      },
+    );
   }
 
   private changed() {
@@ -217,7 +261,70 @@ export class PostNotice {
     this.onChange(this);
   }
 
-  private draw() {
+  private drawCardHeader() {
+    const context = this.context;
+    context.clearRect(0, 0, WIDTH, HEIGHT);
+    context.beginPath();
+    context.roundRect(2, 2, WIDTH - 4, HEIGHT - 4, 26);
+    context.fillStyle = '#fff';
+    context.fill();
+    context.lineWidth = 4;
+    context.strokeStyle = '#d8dbe2';
+    context.stroke();
+
+    const radius = 29;
+    const centerX = MARGIN + radius;
+    const centerY = 63;
+    context.beginPath();
+    context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    if (this.avatar) {
+      const { naturalWidth, naturalHeight } = this.avatar;
+      const size = Math.min(naturalWidth, naturalHeight);
+      context.save();
+      context.clip();
+      context.drawImage(
+        this.avatar,
+        (naturalWidth - size) / 2,
+        (naturalHeight - size) / 2,
+        size,
+        size,
+        centerX - radius,
+        centerY - radius,
+        radius * 2,
+        radius * 2,
+      );
+      context.restore();
+    } else {
+      context.fillStyle = '#ffdac9';
+      context.fill();
+      context.fillStyle = '#893500';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.font = '750 28px system-ui, sans-serif';
+      const initial = graphemes.segment(this.author)[Symbol.iterator]().next()
+        .value?.segment;
+      context.fillText(initial?.toLocaleUpperCase() ?? '?', centerX, centerY);
+      context.textBaseline = 'alphabetic';
+    }
+    context.textAlign = 'left';
+    context.fillStyle = CARD_INK;
+    context.font = '750 31px system-ui, sans-serif';
+    context.fillText(this.author, MARGIN + radius * 2 + 18, 73, 430);
+    context.textAlign = 'right';
+    context.font = '500 22px system-ui, sans-serif';
+    context.fillStyle = CARD_MUTED;
+    context.fillText(this.date, WIDTH - MARGIN, 72, 168);
+    context.textAlign = 'left';
+    if (this.replyDescription)
+      context.fillText(
+        `↳ ${this.replyDescription}`,
+        MARGIN,
+        113,
+        WIDTH - MARGIN * 2,
+      );
+  }
+
+  private drawNoticeHeader() {
     const context = this.context;
     paper ??= makePaper();
     context.drawImage(paper, 0, 0);
@@ -229,9 +336,14 @@ export class PostNotice {
     context.fillStyle = '#70512f';
     context.font = '600 18px monospace';
     context.fillText(this.date, WIDTH - MARGIN, 86);
+  }
 
+  private draw() {
+    const context = this.context;
+    if (this.options.card) this.drawCardHeader();
+    else this.drawNoticeHeader();
     context.textAlign = 'left';
-    context.fillStyle = '#251f16';
+    context.fillStyle = this.options.card ? CARD_INK : '#251f16';
     context.font = BODY_FONT;
     const page = this.pages[this.index];
     if (page.kind === 'text') {
@@ -269,7 +381,7 @@ export class PostNotice {
 
     if (this.pageCount > 1) {
       context.font = '700 20px monospace';
-      context.fillStyle = '#70512f';
+      context.fillStyle = this.options.card ? CARD_MUTED : '#70512f';
       context.fillText(
         `${this.index + 1} / ${this.pageCount}`,
         MARGIN,

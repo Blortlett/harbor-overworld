@@ -1,10 +1,13 @@
+import { randomBytes } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { HttpServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   displayName,
+  isPlacement,
   isPose,
+  isProof,
   parseMessage,
   PRESENCE_INTERVAL,
   PRESENCE_PATH,
@@ -13,6 +16,7 @@ import {
   readChat,
   ROOM_CAPACITY,
 } from '../src/world/presence-protocol.ts';
+import { verifyKing } from './king.ts';
 import { createPlots } from './plots.ts';
 
 const IDLE_MS = 20_000;
@@ -24,6 +28,9 @@ type Client = {
   slot: number;
   pose?: NamedPose;
   updatedAt: number;
+  nextPlacement: number;
+  nextProof: number;
+  proof?: string;
 };
 
 function sameHost(request: IncomingMessage) {
@@ -42,12 +49,27 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
   const server = new WebSocketServer({ noServer: true, maxPayload: 1536 });
   const clients = new Map<string, Client>();
   let nextId = 1;
+  let king: Client | undefined;
 
-  const plots = createPlots(plotsFile, (snapshot) => {
+  function broadcast(snapshot: PresenceMessage) {
     const message = JSON.stringify(snapshot);
     for (const { ws } of clients.values())
       if (ws.readyState === WebSocket.OPEN) ws.send(message);
+  }
+  const plots = createPlots(plotsFile, broadcast, (day, post) => {
+    broadcast({ type: 'placements', day, posts: [post] });
   });
+
+  function setKing(client: Client, enabled: boolean) {
+    if (enabled) {
+      if (king && king !== client) setKing(king, false);
+      king = client;
+    } else if (king === client) {
+      king = undefined;
+    }
+    if (client.ws.readyState === WebSocket.OPEN)
+      client.ws.send(JSON.stringify({ type: 'king', enabled }));
+  }
 
   function upgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
     const [path, query] = (request.url ?? '').split('?');
@@ -74,27 +96,71 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
       );
       let slot = 0;
       while (occupied.has(slot)) slot++;
+      const nonce = randomBytes(32).toString('hex');
       const client: Client = {
         ws,
         id: previous?.id ?? nextId++,
         slot: previous?.slot ?? slot,
         pose: previous?.pose,
         updatedAt: performance.now(),
+        nextPlacement: 0,
+        nextProof: 0,
       };
       clients.set(session, client);
       previous?.ws.close(4001, 'Connection replaced');
       ws.on('error', () => ws.terminate());
       ws.on('close', () => {
         if (clients.get(session) === client) clients.delete(session);
+        if (king === client) king = undefined;
       });
       ws.on('message', (data, binary) => {
+        if (binary || clients.get(session) !== client) return;
         const now = performance.now();
-        if (
-          binary ||
-          (client.pose && now - client.updatedAt < PRESENCE_INTERVAL / 2)
-        )
-          return;
         const message = parseMessage(data.toString());
+        if (isPlacement(message)) {
+          if (now < client.nextPlacement) return;
+          client.nextPlacement = now + 1000;
+          void plots.place(message).then((post) => {
+            if (!post || ws.readyState !== WebSocket.OPEN) return;
+            const { day } = plots.placements();
+            ws.send(JSON.stringify({ type: 'placements', day, posts: [post] }));
+          });
+          return;
+        }
+        if (
+          message &&
+          typeof message === 'object' &&
+          'type' in message &&
+          message.type === 'king'
+        ) {
+          if ('enabled' in message && message.enabled === false) {
+            client.proof = undefined;
+            if (king === client) setKing(client, false);
+          } else if (
+            now >= client.nextProof &&
+            'key' in message &&
+            typeof message.key === 'string' &&
+            /^[a-f0-9]{64}$/.test(message.key) &&
+            'proof' in message &&
+            isProof(message.proof) &&
+            client.proof !== message.proof
+          ) {
+            client.nextProof = now + 6000;
+            const proof = message.proof;
+            client.proof = proof;
+            void verifyKing(nonce, message.key, proof)
+              .catch(() => false)
+              .then((enabled) => {
+                if (clients.get(session) === client && client.proof === proof) {
+                  if (!enabled) client.proof = undefined;
+                  setKing(client, enabled);
+                }
+              });
+          }
+          return;
+        }
+        if (client.pose && now - client.updatedAt < PRESENCE_INTERVAL / 2)
+          return;
         if (!isPose(message)) return;
         const { x, y, z, yaw } = message;
         client.pose = {
@@ -111,10 +177,15 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
         type: 'welcome',
         id: client.id,
         slot: client.slot,
+        nonce,
       };
       ws.send(JSON.stringify(welcome));
+      const { day, posts } = plots.placements();
       const plotState = plots.snapshot();
       if (plotState) ws.send(JSON.stringify(plotState));
+      for (const post of posts) {
+        ws.send(JSON.stringify({ type: 'placements', day, posts: [post] }));
+      }
     });
   }
 
@@ -131,7 +202,11 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
         clients.delete(session);
         ws.terminate();
       } else if (client.pose) {
-        players.push({ id: client.id, ...client.pose });
+        players.push({
+          id: client.id,
+          ...client.pose,
+          king: client === king ? (true as const) : undefined,
+        });
       }
     }
     if (!clients.size) return;

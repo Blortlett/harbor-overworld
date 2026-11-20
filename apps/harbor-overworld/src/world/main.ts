@@ -10,14 +10,30 @@ import { createPost, MAX_POST_LENGTH } from '../data/compose';
 import { loadExplorePage } from '../data/feed';
 import { createIdentity, latestLocalProfile } from '../data/identity';
 import { decodePostBundle, eventKeyFromId, type PostData } from '../data/posts';
-import { coatIndex, COATS, nameplate } from './avatar';
+import { coatIndex, COATS } from './avatar';
 import { bindIdentityDialog } from './connect';
+import { bindMobileControls } from './mobile';
 import { PostNotice } from './notice';
 import { type Avatar, createPresence } from './presence';
-import { type ChatPost, displayName, readChat } from './presence-protocol';
+import {
+  displayName,
+  isPlacedPost,
+  isProof,
+  KING_IDENTITY,
+  kingChallenge,
+  type PlacedPost,
+  type PlacementUpdate,
+  placementChallenge,
+  type PostLocation,
+  plotDay,
+} from './presence-protocol';
 import { loadProfile } from '../data/profile';
 import {
   createRenderer,
+  DROP_BASE,
+  DROP_DURATION,
+  DROP_HALF_WIDTH,
+  DROP_HEIGHT,
   EYE_HEIGHT,
   type FallingPost,
   facingNotice,
@@ -71,18 +87,16 @@ const welcomeName = element<HTMLInputElement>('welcome-name');
 const welcomeError = element('welcome-error');
 const enterButton = element<HTMLButtonElement>('enter-world');
 let jump = 0;
-let jumpSpeed = 0;
-let spoken: (ChatPost & { until: number }) | undefined;
+const GRAVITY = 33;
+const JUMP_SPEED = 8.2;
+let airborne: { height: number; startedAt: number; speed: number } | undefined;
+let kingMode = false;
 let avatarName: string | undefined;
 const presence = createPresence(
   () => ({
     ...view,
     y: view.y - EYE_HEIGHT + jump,
     name: avatarName,
-    chat:
-      spoken && performance.now() < spoken.until
-        ? { id: spoken.id, text: spoken.text }
-        : undefined,
   }),
   (slot) => {
     if (Math.hypot(view.x - SPAWN.x, view.z - SPAWN.z) > 0.25) return;
@@ -94,7 +108,37 @@ const presence = createPresence(
     roomStatus.textContent = label;
   },
   updatePlots,
+  updatePlacements,
+  async (nonce) => {
+    const activeClient = client;
+    const pair = activeClient?.currentKeyPair;
+    if (activeClient?.activeIdentityKey !== KING_IDENTITY || !pair) return;
+    const signature = await activeClient.cryptoManager.sign(
+      pair.privateKey.key,
+      kingChallenge(nonce),
+      pair.keyType,
+    );
+    if (
+      activeClient.activeIdentityKey !== KING_IDENTITY ||
+      activeClient.currentKeyPair !== pair
+    )
+      return;
+    return {
+      key: bytesToHex(pair.publicKey.key),
+      proof: bytesToHex(signature),
+    };
+  },
+  (enabled) => {
+    kingMode = enabled && client?.activeIdentityKey === KING_IDENTITY;
+    if (kingMode) announce('King Mode enabled');
+  },
 );
+const mobile = bindMobileControls(game, world, {
+  hasStarted: () => entered && !chatPanel.open && !connectPanel.open,
+  handleLook,
+  jump: jumpOnce,
+  openChat: () => void openChat(),
+});
 let renderer: ReturnType<typeof createRenderer> | undefined;
 let entered = false;
 let dragging = false;
@@ -102,16 +146,24 @@ let busy = false;
 let notices: PostNotice[] = [];
 let focusedNotice: PostNotice | undefined;
 let replyTo: PostData | undefined;
-let pending: PostData | undefined;
+let pending:
+  | { post: PostData; paper: string; location: PostLocation; proof?: string }
+  | undefined;
 let client: PolycentricClient | undefined;
 let toastTimer = 0;
 let resumePointer = false;
 let resumeChat = false;
-let haveFeed = false;
+let openingReply = false;
 let plotsDay: string | undefined;
-const feedStartedAt = Date.now();
-const seenPosts = new Set<string>();
-const drops: FallingPost[] = [];
+let placementsDay = '';
+type WorldPost = {
+  notice: PostNotice;
+  drop: FallingPost;
+  proof?: string;
+  retryAt: number;
+};
+const worldPosts = new Map<string, WorldPost>();
+const placementStorage = 'overworld:placement:';
 
 function setNotices(posts: readonly PostData[]) {
   const byId = new Map(notices.map((notice) => [notice.post.id, notice]));
@@ -121,70 +173,156 @@ function setNotices(posts: readonly PostData[]) {
   renderer?.setStations(notices.map((notice) => notice.canvas));
 }
 
-function updatePlots({ day, papers }: { day: string; papers: string[] }) {
-  const posts = papers.slice(0, STATIONS.length).flatMap((paper) => {
-    try {
-      const bundle = v2.EventBundle.fromBinary(
-        Uint8Array.from(atob(paper), (char) => char.charCodeAt(0)),
-      );
-      const post = decodePostBundle(bundle);
-      return post ? [post] : [];
-    } catch {
-      return [];
-    }
-  });
-  const existing = new Set(notices.map((notice) => notice.post.id));
-  const firstSnapshot = !plotsDay;
-  if (plotsDay && plotsDay !== day) drops.length = 0;
-  plotsDay = day;
-  setNotices(posts);
-  if (firstSnapshot) return;
-  for (const [index, notice] of notices.entries()) {
-    if (existing.has(notice.post.id)) continue;
-    const [x, z, sideways] = STATIONS[index];
-    dropPost(
-      notice.post.id,
-      notice.canvas,
-      x + (sideways ? 1.6 : 0),
-      z + (sideways ? 0 : 1.6),
+function decodePaper(paper: string) {
+  try {
+    const bundle = v2.EventBundle.fromBinary(
+      Uint8Array.from(atob(paper), (char) => char.charCodeAt(0)),
     );
+    return decodePostBundle(bundle);
+  } catch {
+    return null;
   }
 }
 
-function dropPost(
-  id: string,
-  paper: HTMLCanvasElement,
-  x: number,
-  z: number,
-  delay = 0,
-) {
-  if (seenPosts.has(id)) return;
-  seenPosts.add(id);
-  if (seenPosts.size > 2000) {
-    const oldest = seenPosts.values().next().value;
-    if (oldest) seenPosts.delete(oldest);
-  }
-  drops.push({
-    id,
-    paper,
-    x,
-    z,
-    y: Math.max(1.1, ground(x, z)),
-    start: performance.now() / 1000 + delay,
-  });
-}
-
-function dropNotice(post: PostData, delay = 0) {
-  if (seenPosts.has(post.id)) return;
-  const notice = new PostNotice(post, () => undefined);
-  const side = Math.sin(drops.length * 2) * 2;
-  dropPost(
-    post.id,
-    notice.canvas,
-    view.x + Math.sin(view.yaw) * 6 + Math.cos(view.yaw) * side,
-    view.z - Math.cos(view.yaw) * 6 + Math.sin(view.yaw) * side,
-    delay,
+function updatePlots({ day, papers }: { day: string; papers: string[] }) {
+  if (day !== plotDay(Date.now())) return;
+  plotsDay = day;
+  setNotices(
+    papers.slice(0, STATIONS.length).flatMap((paper) => {
+      const post = decodePaper(paper);
+      return post ? [post] : [];
+    }),
   );
+}
+
+function showPlacement(placement: PlacedPost, proof?: string, author?: string) {
+  const { id, x, z, landedAt, paper } = placement;
+  const existing = worldPosts.get(id);
+  if (existing && (!existing.proof || proof)) return;
+  if (existing?.drop.x === x && existing.drop.z === z) {
+    existing.proof = undefined;
+    return;
+  }
+  const post = decodePaper(paper);
+  if (!post || post.id !== id) return;
+  const notice = new PostNotice(post, updateNotice, { card: true, author });
+  let y = ground(x, z);
+  for (const { drop } of worldPosts.values()) {
+    if (drop.id !== id && drop.x === x && drop.z === z)
+      y = Math.max(y, drop.y + DROP_HEIGHT + 0.08);
+  }
+  worldPosts.set(id, {
+    notice,
+    drop: {
+      id,
+      x,
+      y,
+      z,
+      paper: notice.canvas,
+      start:
+        performance.now() / 1000 - Math.max(0, (Date.now() - landedAt) / 1000),
+    },
+    proof,
+    retryAt: 0,
+  });
+  renderer?.setDrop(id, notice.canvas);
+}
+
+function refreshDay(now = Date.now()) {
+  const day = plotDay(now);
+  if (day === placementsDay) return;
+  placementsDay = day;
+  worldPosts.clear();
+  if (plotsDay && plotsDay !== day) {
+    plotsDay = day;
+    setNotices([]);
+  }
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(placementStorage)) continue;
+      if (!key.startsWith(`${placementStorage}${day}:`)) {
+        localStorage.removeItem(key);
+        continue;
+      }
+      const saved = localStorage.getItem(key);
+      if (!saved) continue;
+      try {
+        const placement: unknown = JSON.parse(saved);
+        if (
+          isPlacedPost(placement) &&
+          'proof' in placement &&
+          isProof(placement.proof)
+        )
+          showPlacement(placement, placement.proof);
+      } catch {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch (error) {
+    console.warn('Could not restore local Overworld posts:', error);
+  }
+}
+
+function updatePlacements({ day, posts }: PlacementUpdate) {
+  refreshDay();
+  if (day !== placementsDay) return;
+  for (const post of posts) showPlacement(post);
+}
+
+function retryPlacements() {
+  const now = Date.now();
+  refreshDay(now);
+  for (const entry of worldPosts.values()) {
+    if (!entry.proof || entry.retryAt > now) continue;
+    const { id, x, z } = entry.drop;
+    if (presence.place({ type: 'place', id, x, z, proof: entry.proof }))
+      entry.retryAt = now + 8000;
+    break;
+  }
+}
+
+function publishPlacement(
+  placement: PlacedPost & { proof: string },
+  author?: string,
+) {
+  refreshDay(placement.landedAt);
+  showPlacement(placement, placement.proof, author);
+  try {
+    localStorage.setItem(
+      `${placementStorage}${placementsDay}:${placement.id}`,
+      JSON.stringify(placement),
+    );
+  } catch (error) {
+    console.warn('Could not save the local Overworld post:', error);
+  }
+  retryPlacements();
+}
+
+function facingPlacement(camera: typeof view, time: number) {
+  const vx = Math.sin(camera.yaw);
+  const vz = -Math.cos(camera.yaw);
+  const slope = Math.tan(camera.pitch);
+  let nearest: PostNotice | undefined;
+  let range = 5;
+  for (const { drop, notice } of worldPosts.values()) {
+    if (time - drop.start < DROP_DURATION) continue;
+    const dx = drop.x - camera.x;
+    const dz = drop.z - camera.z;
+    const depth = dx * vx + dz * vz;
+    const along = dx * -vz + dz * vx;
+    const height = camera.y + slope * depth - drop.y - DROP_BASE;
+    if (
+      depth < 0.15 ||
+      depth >= range ||
+      Math.abs(along) > DROP_HALF_WIDTH ||
+      height < 0 ||
+      height > DROP_HEIGHT
+    )
+      continue;
+    nearest = notice;
+    range = depth;
+  }
+  return nearest;
 }
 
 draft.maxLength = MAX_POST_LENGTH;
@@ -192,6 +330,10 @@ draft.maxLength = MAX_POST_LENGTH;
 function updateAvatarName(activeClient: PolycentricClient) {
   const identity = activeClient.activeIdentityKey;
   welcomeIdentity.hidden = !!identity;
+  if (identity !== KING_IDENTITY) kingMode = false;
+  void presence
+    .proveKing()
+    .catch((error) => console.warn('Could not verify King Mode:', error));
   avatarName = identity
     ? displayName(latestLocalProfile(activeClient, identity)?.name)
     : undefined;
@@ -245,14 +387,6 @@ async function loadPosts() {
       ...new Map(page.items.map((post) => [post.id, post])).values(),
     ].slice(0, STATIONS.length);
     if (!plotsDay) setNotices(posts);
-    if (haveFeed && entered) {
-      const fresh = posts.filter(
-        (post) => post.createdAt >= feedStartedAt && !seenPosts.has(post.id),
-      );
-      for (const [index, post] of fresh.slice(0, 5).entries())
-        dropNotice(post, index * 0.23);
-    }
-    haveFeed = true;
     markNetwork(
       'live',
       'PRODUCTION',
@@ -303,6 +437,7 @@ function pause(dialog: HTMLDialogElement) {
   }
   dragging = false;
   keys.clear();
+  mobile.reset();
   dialog.showModal();
 }
 
@@ -316,8 +451,9 @@ function closePanel(dialog: HTMLDialogElement, resume = true) {
 
 function updateNotice(notice: PostNotice) {
   const index = notices.indexOf(notice);
-  if (index < 0) return;
-  renderer?.setNotice(index, notice.canvas);
+  if (index >= 0) renderer?.setNotice(index, notice.canvas);
+  if (worldPosts.get(notice.post.id)?.notice === notice)
+    renderer?.setDrop(notice.post.id, notice.canvas);
   if (focusedNotice === notice)
     noticeDescription.textContent = notice.description;
 }
@@ -440,25 +576,52 @@ chatForm.addEventListener('submit', async (event) => {
   report('Publishing…');
   try {
     const retry = !!pending;
-    pending ??= await createPost(activeClient, { text, images: [], replyTo });
-    if (!(await publish(activeClient, pending, retry)))
-      throw new Error('No production server confirmed the post.');
-    const message = replyTo
-      ? 'Reply published to Harbor.'
-      : 'Post published to Harbor.';
-    const chat = readChat({ id: pending.id, text: pending.content });
-    if (chat?.text) {
-      spoken = { ...chat, until: performance.now() + 10_000 };
-      const selfChat = element('self-chat');
-      selfChat.textContent = chat.text;
-      selfChat.hidden = false;
+    if (!pending) {
+      const { x, z } = view;
+      const result = await createPost(activeClient, {
+        text,
+        images: [],
+        replyTo,
+      });
+      pending = { ...result, location: { x, z } };
     }
-    dropNotice(pending);
+    const { post, paper, location } = pending;
+    if (!pending.proof) {
+      const pair = activeClient.currentKeyPair;
+      if (
+        !pair ||
+        bytesToHex(pair.publicKey.key) !== bytesToHex(post.signedBy.key)
+      )
+        throw new Error('The publishing identity changed.');
+      pending.proof = bytesToHex(
+        await activeClient.cryptoManager.sign(
+          pair.privateKey.key,
+          placementChallenge(post.id, location.x, location.z),
+          pair.keyType,
+        ),
+      );
+    }
+    if (!(await publish(activeClient, post, retry)))
+      throw new Error('No production server confirmed the post.');
+    publishPlacement(
+      {
+        id: post.id,
+        paper,
+        ...location,
+        proof: pending.proof,
+        landedAt: Date.now(),
+      },
+      latestLocalProfile(activeClient, post.identity)?.name,
+    );
     pending = undefined;
     replyTo = undefined;
     draft.value = '';
     if (chatPanel.open) closePanel(chatPanel, false);
-    announce(message);
+    announce(
+      post.reply
+        ? 'Reply dropped here. Step back to read it.'
+        : 'Post dropped here. Step back to read it.',
+    );
     void loadPosts();
   } catch (error) {
     console.error('Harbor publish failed:', error);
@@ -544,7 +707,7 @@ async function enterFromWelcome() {
   if (busy) return;
   const name = welcomeName.value.trim();
   if (!name || client?.activeIdentityKey) {
-    enter(true);
+    enter(!game.classList.contains('touch-input'));
     return;
   }
   busy = true;
@@ -576,11 +739,15 @@ welcomeIdentity.addEventListener('submit', (event) => {
 });
 element('open-chat').addEventListener('click', () => void openChat());
 element('reply').addEventListener('click', replyToNotice);
-world.addEventListener('click', () => {
-  if (!busy) enter(true);
+world.addEventListener('click', (event) => {
+  const mouse = event.pointerType
+    ? event.pointerType === 'mouse'
+    : !game.classList.contains('touch-input');
+  if (!busy && (!entered || mouse)) enter(mouse);
 });
-world.addEventListener('pointerdown', () => {
-  dragging = entered && document.pointerLockElement !== world;
+world.addEventListener('pointerdown', (event) => {
+  if (event.pointerType === 'mouse')
+    dragging = entered && document.pointerLockElement !== world;
 });
 window.addEventListener('pointerup', () => {
   dragging = false;
@@ -588,20 +755,52 @@ window.addEventListener('pointerup', () => {
 window.addEventListener('blur', () => {
   keys.clear();
   dragging = false;
+  openingReply = false;
+  mobile.reset();
 });
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement !== world) keys.clear();
   else resumePointer = false;
 });
+function handleLook(deltaX: number, deltaY: number) {
+  view.yaw += deltaX * 0.00245;
+  view.pitch = Math.max(-1.31, Math.min(1.31, view.pitch - deltaY * 0.00245));
+}
+
+function jumpHeight(time: number) {
+  if (!airborne) return 0;
+  const { height, startedAt, speed } = airborne;
+  const seconds = Math.max(0, (time - startedAt) / 1000);
+  return Math.max(
+    0,
+    Math.min(
+      80 - view.y,
+      height + speed * seconds - (GRAVITY * seconds ** 2) / 2,
+    ),
+  );
+}
+
+function jumpOnce() {
+  if (!entered || chatPanel.open || connectPanel.open) return;
+  const startedAt = performance.now();
+  const height = jumpHeight(startedAt);
+  if (!kingMode && (height > 0 || airborne?.startedAt === startedAt)) return;
+  airborne = {
+    height,
+    startedAt,
+    speed: kingMode ? JUMP_SPEED * Math.SQRT2 : JUMP_SPEED,
+  };
+}
+
 document.addEventListener('mousemove', (event) => {
   if (document.pointerLockElement !== world && !dragging) return;
-  view.yaw += event.movementX * 0.00245;
-  view.pitch = Math.max(
-    -1.31,
-    Math.min(1.31, view.pitch - event.movementY * 0.00245),
-  );
+  handleLook(event.movementX, event.movementY);
 });
 window.addEventListener('keydown', (event) => {
+  if (openingReply && event.code === 'KeyR' && event.repeat) {
+    event.preventDefault();
+    return;
+  }
   if (
     event.defaultPrevented ||
     event.isComposing ||
@@ -614,24 +813,32 @@ window.addEventListener('keydown', (event) => {
   )
     return;
   if (
-    event.key === 'Enter' &&
-    (entered ||
-      !(
-        event.target instanceof HTMLElement && event.target.closest('button, a')
-      ))
-  ) {
+    event.target instanceof HTMLElement &&
+    (event.target.closest('input, textarea, [contenteditable]') ||
+      ((event.key === 'Enter' || event.code === 'Space') &&
+        event.target.closest('button, a')))
+  )
+    return;
+  if (event.key === 'Enter') {
     event.preventDefault();
     if (!event.repeat) void openChat();
+    return;
   }
   if (entered && event.code === 'Space') {
     event.preventDefault();
-    if (!event.repeat && jump === 0) jumpSpeed = 5.6;
+    if (!event.repeat) jumpOnce();
     return;
   }
-  if (focusedNotice && !event.repeat) {
+  if (focusedNotice && ['KeyE', 'KeyR', 'KeyT'].includes(event.code)) {
+    event.preventDefault();
+    if (event.repeat) return;
     if (event.code === 'KeyE') turnPage(event.shiftKey);
-    if (event.code === 'KeyR') replyToNotice();
+    if (event.code === 'KeyR') {
+      openingReply = true;
+      replyToNotice();
+    }
     if (event.code === 'KeyT') thread.click();
+    return;
   }
   if (!renderer || !movement.includes(event.code)) return;
   event.preventDefault();
@@ -639,6 +846,7 @@ window.addEventListener('keydown', (event) => {
   keys.add(event.code);
 });
 window.addEventListener('keyup', (event) => {
+  if (event.code === 'KeyR') openingReply = false;
   keys.delete(event.code);
 });
 
@@ -693,7 +901,12 @@ function drawHud(avatars: readonly Avatar[] = []) {
   if (!mapContext) return;
   mapContext.drawImage(mapTerrain, 0, 0);
   mapContext.fillStyle = '#ffca78';
-  for (const [x, z] of STATIONS.slice(0, notices.length)) {
+  const postLocations = STATIONS.slice(0, notices.length).map(([x, z]) => ({
+    x,
+    z,
+  }));
+  for (const { drop } of worldPosts.values()) postLocations.push(drop);
+  for (const { x, z } of postLocations) {
     mapContext.fillRect(
       Math.round((x - mapX) * mapScale) - 1,
       Math.round((z - mapZ) * mapScale) - 1,
@@ -743,6 +956,7 @@ function start() {
     drawHud();
     return;
   }
+  refreshDay();
   let previous = performance.now();
   function frame(time: number) {
     requestAnimationFrame(frame);
@@ -763,37 +977,26 @@ function start() {
             (Number(keys.has('ArrowUp')) - Number(keys.has('ArrowDown'))) * dt,
         ),
       );
-      walk(view, keys, dt, renderer.obstacles, notices.length);
+      walk(view, keys, dt, renderer.obstacles, notices.length, mobile.movement);
     }
-    if (jump > 0 || jumpSpeed > 0) {
-      jumpSpeed -= 13 * dt;
-      jump = Math.max(0, jump + jumpSpeed * dt);
-      if (jump === 0) jumpSpeed = 0;
-    }
+    jump = jumpHeight(time);
+    if (airborne && time > airborne.startedAt && jump === 0)
+      airborne = undefined;
     const camera = { ...view, y: view.y + jump };
-    const noticeIndex = exploring ? facingNotice(camera, notices.length) : -1;
-    focusNotice(notices[noticeIndex]);
-    const avatars = presence.avatars(time);
-    for (const avatar of avatars) {
-      if (!avatar.chat?.text || seenPosts.has(avatar.chat.id)) continue;
-      const paper = nameplate(avatar.id, avatar.chat.text);
-      if (paper)
-        dropPost(
-          avatar.chat.id,
-          paper,
-          avatar.x + Math.sin(avatar.yaw) * 2,
-          avatar.z - Math.cos(avatar.yaw) * 2,
-        );
-    }
     const seconds = time / 1000;
-    for (let index = drops.length - 1; index >= 0; index--) {
-      if (seconds - drops[index].start > 22) drops.splice(index, 1);
-    }
-    if (spoken && time >= spoken.until) {
-      spoken = undefined;
-      element('self-chat').hidden = true;
-    }
-    renderer.draw(camera, seconds, avatars, drops);
+    const noticeIndex = exploring ? facingNotice(camera, notices.length) : -1;
+    focusNotice(
+      exploring
+        ? (facingPlacement(camera, seconds) ?? notices[noticeIndex])
+        : undefined,
+    );
+    const avatars = presence.avatars(time);
+    renderer.draw(
+      camera,
+      seconds,
+      avatars,
+      [...worldPosts.values()].map(({ drop }) => drop),
+    );
     drawHud(avatars);
   }
   requestAnimationFrame(frame);
@@ -802,6 +1005,10 @@ function start() {
 start();
 void loadPosts();
 
+window.setInterval(retryPlacements, 1500);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) retryPlacements();
+});
 window.setInterval(() => {
   if (entered && !document.hidden) void loadPosts();
 }, 12_000);

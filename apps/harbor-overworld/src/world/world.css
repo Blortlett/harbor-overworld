@@ -38,6 +38,10 @@ a {
   outline-offset: 3px;
 }
 #overworld {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
   position: fixed;
   inset: 0;
   overflow: hidden;
@@ -63,7 +67,7 @@ a {
 }
 .hud-top,
 .hud-bottom {
-  inset: auto 28px;
+  inset: auto max(28px, var(--safe-right)) auto max(28px, var(--safe-left));
   display: flex;
   justify-content: space-between;
   align-items: start;
@@ -71,10 +75,10 @@ a {
   pointer-events: none;
 }
 .hud-top {
-  top: 26px;
+  top: max(26px, var(--safe-top));
 }
 .hud-bottom {
-  bottom: 26px;
+  bottom: max(26px, var(--safe-bottom));
   align-items: end;
 }
 .plate {
@@ -164,6 +168,44 @@ a {
   display: grid;
   justify-items: end;
   gap: 7px;
+  min-width: 0;
+}
+.world-tools {
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+}
+.fullscreen {
+  display: grid;
+  flex: 0 0 44px;
+  place-items: center;
+  min-height: 44px;
+  padding: 0;
+  color: var(--ink);
+  pointer-events: auto;
+}
+.fullscreen:hover,
+.fullscreen:focus-visible {
+  color: var(--gold);
+}
+.fullscreen-icon {
+  width: 19px;
+  height: 19px;
+  background:
+    linear-gradient(currentColor 0 0) left top / 7px 2px,
+    linear-gradient(currentColor 0 0) top left / 2px 7px,
+    linear-gradient(currentColor 0 0) right top / 7px 2px,
+    linear-gradient(currentColor 0 0) top right / 2px 7px,
+    linear-gradient(currentColor 0 0) left bottom / 7px 2px,
+    linear-gradient(currentColor 0 0) bottom left / 2px 7px,
+    linear-gradient(currentColor 0 0) right bottom / 7px 2px,
+    linear-gradient(currentColor 0 0) bottom right / 2px 7px;
+  background-repeat: no-repeat;
+}
+.fullscreen[data-fullscreen="true"] .fullscreen-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--gold);
 }
 .room-status {
   margin: 0;
@@ -555,19 +597,22 @@ kbd,
   overflow: hidden;
   clip-path: inset(50%);
 }
+@media (max-width: 760px) {
+  .compass {
+    top: 66px;
+  }
+}
 @media (max-width: 620px) {
   .hud-top,
   .hud-bottom {
-    inset-inline: 12px;
+    left: max(12px, var(--safe-left));
+    right: max(12px, var(--safe-right));
   }
   .hud-top {
-    top: 12px;
+    top: max(12px, var(--safe-top));
   }
   .hud-bottom {
-    bottom: 12px;
-  }
-  .compass {
-    top: 66px;
+    bottom: max(12px, var(--safe-bottom));
   }
   .welcome {
     left: 22px;
@@ -639,16 +684,197 @@ button.text-link {
   color: var(--gold);
 }
 
-.self-chat {
+.touch-controls,
+.touch-help {
+  display: none;
+}
+.entered #world,
+.move-stick,
+.touch-actions {
+  touch-action: none;
+}
+.touch-input .welcome {
+  bottom: max(16px, var(--safe-bottom));
+  overflow: auto;
+}
+.touch-input .touch-help {
+  display: block;
+  margin: 0 0 14px;
+  color: var(--ink);
+  font-size: 14px;
+  text-shadow: 0 1px 5px #101912;
+}
+.touch-input .controls,
+.touch-input .interaction kbd,
+.touch-input .keyboard-help {
+  display: none;
+}
+.touch-input.entered .touch-controls {
   position: absolute;
-  top: 15%;
-  left: 50%;
-  translate: -50% 0;
-  width: max-content;
-  max-width: min(480px, 85%);
   margin: 0;
-  padding: 8px 13px;
-  overflow-wrap: anywhere;
-  text-align: center;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+  z-index: 1;
+  left: max(16px, calc(var(--safe-left) + 8px));
+  right: max(16px, calc(var(--safe-right) + 8px));
+  bottom: max(16px, calc(var(--safe-bottom) + 8px));
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
   pointer-events: none;
+}
+.move-stick {
+  width: clamp(88px, 16vw, 112px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-color: #e4d6a96e;
+  border-radius: 50%;
+  background: #1019129e;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#move-thumb {
+  width: 39%;
+  aspect-ratio: 1;
+  border: 1px solid #e4d6a9a6;
+  border-radius: 50%;
+  background: #595842;
+  box-shadow: 0 2px 6px #0a13084f;
+  pointer-events: none;
+}
+.touch-actions {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.touch-actions button {
+  min-width: 55px;
+  min-height: 48px;
+  padding: 0 9px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+.touch-actions button:active {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.touch-input .hud-bottom {
+  top: max(109px, calc(var(--safe-top) + 98px));
+  bottom: auto;
+  left: auto;
+  right: max(12px, var(--safe-right));
+}
+.touch-input:not(.entered) .hud-bottom {
+  display: none;
+}
+.touch-input #minimap {
+  width: clamp(85px, 19vw, 115px);
+  height: auto;
+}
+.touch-input .map-footer {
+  gap: 6px;
+  font-size: 11px;
+}
+.touch-input .interaction {
+  bottom: max(132px, calc(var(--safe-bottom) + 116px));
+  width: max-content;
+}
+.touch-input .interaction :is(button, a) {
+  min-height: 44px;
+  padding-inline: 11px;
+}
+.touch-input .toast {
+  bottom: max(194px, calc(var(--safe-bottom) + 178px));
+  width: max-content;
+  max-width: min(85%, 440px);
+  pointer-events: none;
+}
+.touch-input
+  :is(.chat-panel textarea, .chat-panel input, .welcome-identity input) {
+  font-size: 16px;
+}
+.touch-input .close {
+  width: 44px;
+  height: 44px;
+}
+@media (max-width: 620px) {
+  .hud-top {
+    gap: 8px;
+  }
+  .brand,
+  .network {
+    gap: 5px;
+    min-height: 48px;
+    padding-inline: 7px;
+  }
+  .brand-mark {
+    width: 26px;
+    height: 28px;
+  }
+  .brand-mark::before {
+    width: 17px;
+    height: 19px;
+  }
+  .brand strong {
+    font-size: 13px;
+  }
+  .brand small {
+    font-size: 9px;
+  }
+  .network {
+    min-width: 0;
+  }
+  .network strong {
+    font-size: 10px;
+  }
+  .network small {
+    font-size: 11px;
+  }
+  .network > :nth-child(2) {
+    min-width: 0;
+  }
+  .network :is(strong, small) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .welcome {
+    right: max(16px, var(--safe-right));
+    left: max(22px, var(--safe-left));
+  }
+}
+@media (max-height: 560px) {
+  .touch-input .welcome {
+    top: max(75px, calc(var(--safe-top) + 60px));
+  }
+  .touch-input .panel {
+    padding: 17px;
+  }
+  .touch-input .panel h2 {
+    font-size: 23px;
+  }
+}
+@media (max-height: 450px) and (orientation: landscape) {
+  .touch-input .hud-top {
+    top: max(12px, var(--safe-top));
+  }
+  .touch-input .move-stick {
+    width: 88px;
+  }
+  .touch-input .interaction {
+    bottom: max(20px, calc(var(--safe-bottom) + 12px));
+  }
+  .touch-input .toast {
+    bottom: max(78px, calc(var(--safe-bottom) + 70px));
+  }
+  .touch-input .welcome h1 br {
+    display: none;
+  }
+  .touch-input .welcome h1 em {
+    margin-inline-start: 0.17em;
+  }
 }

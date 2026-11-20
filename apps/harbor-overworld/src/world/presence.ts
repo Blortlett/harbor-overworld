@@ -1,18 +1,21 @@
 import {
   displayName,
   isPose,
+  isPlacedPost,
   parseMessage,
   PRESENCE_INTERVAL,
   PRESENCE_PATH,
   type NamedPose,
   type PlotSnapshot,
+  type Placement,
+  type PlacementUpdate,
   type Pose,
   type ChatPost,
   readChat,
   ROOM_CAPACITY,
 } from './presence-protocol';
 
-export type Avatar = NamedPose & { id: number; walking: boolean };
+export type Avatar = NamedPose & { id: number; walking: boolean; king?: true };
 
 type Track = {
   from: Pose;
@@ -21,6 +24,7 @@ type Track = {
   to: Pose;
   receivedAt: number;
   walking: boolean;
+  king?: true;
 };
 
 function interpolate(track: Track, now: number): Pose {
@@ -48,6 +52,11 @@ export function createPresence(
   onJoin: (slot: number) => void,
   onStatus: (label: string) => void,
   onPlots: (snapshot: PlotSnapshot) => void,
+  onPlacements: (update: PlacementUpdate) => void,
+  getKingProof: (
+    nonce: string,
+  ) => Promise<{ key: string; proof: string } | undefined>,
+  onKing: (enabled: boolean) => void,
 ) {
   const session = Array.from(
     crypto.getRandomValues(new Uint8Array(16)),
@@ -61,6 +70,7 @@ export function createPresence(
   let started = false;
   let available = false;
   let id: number | undefined;
+  let nonce: string | undefined;
   let lastStatus = '';
 
   function status(value: string) {
@@ -85,6 +95,21 @@ export function createPresence(
         chat,
         yaw: Math.atan2(Math.sin(yaw), Math.cos(yaw)),
       }),
+    );
+  }
+
+  async function proveKing() {
+    const connection = socket;
+    const challenge = nonce;
+    if (!connection || !challenge || connection.readyState !== WebSocket.OPEN)
+      return;
+    const proof = await getKingProof(challenge);
+    if (socket !== connection || connection.readyState !== WebSocket.OPEN)
+      return;
+    connection.send(
+      JSON.stringify(
+        proof ? { type: 'king', ...proof } : { type: 'king', enabled: false },
+      ),
     );
   }
 
@@ -115,15 +140,45 @@ export function createPresence(
         message.slot < ROOM_CAPACITY
       ) {
         id = message.id;
+        nonce =
+          'nonce' in message &&
+          typeof message.nonce === 'string' &&
+          /^[a-f0-9]{64}$/.test(message.nonce)
+            ? message.nonce
+            : undefined;
         attempts = 0;
         if (!available) onJoin(message.slot);
         available = true;
         status('1 player online');
         sendPose(connection);
+        void proveKing();
         sendTimer = window.setInterval(
           () => sendPose(connection),
           PRESENCE_INTERVAL,
         );
+        return;
+      }
+
+      if (
+        message.type === 'placements' &&
+        'day' in message &&
+        typeof message.day === 'string' &&
+        'posts' in message &&
+        Array.isArray(message.posts)
+      ) {
+        onPlacements({
+          type: 'placements',
+          day: message.day,
+          posts: message.posts.filter(isPlacedPost),
+        });
+        return;
+      }
+      if (
+        message.type === 'king' &&
+        'enabled' in message &&
+        typeof message.enabled === 'boolean'
+      ) {
+        onKing(message.enabled);
         return;
       }
 
@@ -173,6 +228,7 @@ export function createPresence(
           to: player,
           name: 'name' in player ? displayName(player.name) : undefined,
           chat: 'chat' in player ? readChat(player.chat) : undefined,
+          king: 'king' in player && player.king === true ? true : undefined,
           receivedAt: now,
           walking: distance > 0.02 && distance < 6,
         });
@@ -201,6 +257,8 @@ export function createPresence(
   function reset() {
     socket = undefined;
     id = undefined;
+    nonce = undefined;
+    onKing(false);
     clearInterval(sendTimer);
     clearTimeout(reconnectTimer);
     tracks.clear();
@@ -216,6 +274,13 @@ export function createPresence(
   });
 
   return {
+    proveKing,
+    place(placement: Placement) {
+      if (id === undefined || socket?.readyState !== WebSocket.OPEN)
+        return false;
+      socket.send(JSON.stringify(placement));
+      return true;
+    },
     join() {
       if (started) return;
       started = true;
@@ -227,6 +292,7 @@ export function createPresence(
         walking: track.walking,
         name: track.name,
         chat: track.chat,
+        king: track.king,
         ...interpolate(track, now),
       }));
     },
