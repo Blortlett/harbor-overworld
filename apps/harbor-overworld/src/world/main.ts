@@ -58,6 +58,7 @@ const pageButton = element<HTMLButtonElement>('turn-page');
 const thread = element<HTMLAnchorElement>('thread');
 const noticeDescription = element('notice-description');
 const crosshair = element('crosshair');
+const fallingPosts = element('falling-posts');
 const refresh = element<HTMLButtonElement>('refresh');
 const chatPanel = element<HTMLDialogElement>('chat-panel');
 const connectPanel = element<HTMLDialogElement>('connect-panel');
@@ -192,8 +193,15 @@ function updatePlots({ day, papers }: { day: string; papers: string[] }) {
   );
 }
 
-function showPlacement(placement: PlacedPost, proof?: string, author?: string) {
-  const { id, x, z, landedAt, paper } = placement;
+function showPlacement(
+  placement: PlacedPost,
+  {
+    live,
+    proof,
+    author,
+  }: { live?: boolean; proof?: string; author?: string } = {},
+) {
+  const { id, x, z, paper } = placement;
   const existing = worldPosts.get(id);
   if (existing && (!existing.proof || proof)) return;
   if (existing?.drop.x === x && existing.drop.z === z) {
@@ -216,13 +224,24 @@ function showPlacement(placement: PlacedPost, proof?: string, author?: string) {
       y,
       z,
       paper: notice.canvas,
-      start:
-        performance.now() / 1000 - Math.max(0, (Date.now() - landedAt) / 1000),
+      start: performance.now() / 1000 - (live ? 0 : DROP_DURATION),
     },
     proof,
     retryAt: 0,
   });
   renderer?.setDrop(id, notice.canvas);
+  if (live && !document.hidden) {
+    // The same post card remains visible during the fall even if the player
+    // is facing away or out of rendering range.
+    const card = document.createElement('div');
+    const coords = document.createElement('span');
+    coords.className = 'plate';
+    coords.textContent = `${Math.floor(x)} / ${Math.floor(z)}`;
+    card.append(notice.canvas, coords);
+    fallingPosts.append(card);
+    if (client) notice.loadAssets(client);
+    window.setTimeout(() => card.remove(), 3450);
+  }
 }
 
 function refreshDay(now = Date.now()) {
@@ -230,6 +249,7 @@ function refreshDay(now = Date.now()) {
   if (day === placementsDay) return;
   placementsDay = day;
   worldPosts.clear();
+  fallingPosts.replaceChildren();
   if (plotsDay && plotsDay !== day) {
     plotsDay = day;
     setNotices([]);
@@ -250,7 +270,7 @@ function refreshDay(now = Date.now()) {
           'proof' in placement &&
           isProof(placement.proof)
         )
-          showPlacement(placement, placement.proof);
+          showPlacement(placement, { proof: placement.proof });
       } catch {
         localStorage.removeItem(key);
       }
@@ -260,10 +280,13 @@ function refreshDay(now = Date.now()) {
   }
 }
 
-function updatePlacements({ day, posts }: PlacementUpdate) {
+function updatePlacements({ day, posts, live }: PlacementUpdate) {
   refreshDay();
   if (day !== placementsDay) return;
-  for (const post of posts) showPlacement(post);
+  for (const post of posts) {
+    const age = Date.now() - post.landedAt;
+    showPlacement(post, { live: live ?? (age >= 0 && age < 1000) });
+  }
 }
 
 function retryPlacements() {
@@ -283,7 +306,7 @@ function publishPlacement(
   author?: string,
 ) {
   refreshDay(placement.landedAt);
-  showPlacement(placement, placement.proof, author);
+  showPlacement(placement, { live: true, proof: placement.proof, author });
   try {
     localStorage.setItem(
       `${placementStorage}${placementsDay}:${placement.id}`,

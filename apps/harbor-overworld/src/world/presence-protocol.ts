@@ -71,6 +71,7 @@ export type PlacementUpdate = {
   type: 'placements';
   day: string;
   posts: PlacedPost[];
+  live?: boolean;
 };
 
 export type PresenceMessage =

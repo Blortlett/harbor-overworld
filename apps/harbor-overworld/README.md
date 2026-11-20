@@ -2,7 +2,8 @@
 
 Live Harbor posts appear on wooden noticeboards. Posts and replies published
 from Overworld also drop as Harbor post cards at your position. Step back to
-read the card, reply, or open the thread.
+read the card, reply, or open the thread. Everyone in the room sees the fall
+and its landing coordinates on screen.
 
 Walk with WASD, look with the mouse, jump with Space, turn pages with E, reply
 with R, and open chat with Enter. On a touchscreen, use the joystick to move,

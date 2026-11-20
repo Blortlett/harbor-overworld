@@ -57,7 +57,7 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
       if (ws.readyState === WebSocket.OPEN) ws.send(message);
   }
   const plots = createPlots(plotsFile, broadcast, (day, post) => {
-    broadcast({ type: 'placements', day, posts: [post] });
+    broadcast({ type: 'placements', day, posts: [post], live: true });
   });
 
   function setKing(client: Client, enabled: boolean) {
@@ -123,7 +123,14 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
           void plots.place(message).then((post) => {
             if (!post || ws.readyState !== WebSocket.OPEN) return;
             const { day } = plots.placements();
-            ws.send(JSON.stringify({ type: 'placements', day, posts: [post] }));
+            ws.send(
+              JSON.stringify({
+                type: 'placements',
+                day,
+                posts: [post],
+                live: false,
+              }),
+            );
           });
           return;
         }
@@ -184,7 +191,14 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
       const plotState = plots.snapshot();
       if (plotState) ws.send(JSON.stringify(plotState));
       for (const post of posts) {
-        ws.send(JSON.stringify({ type: 'placements', day, posts: [post] }));
+        ws.send(
+          JSON.stringify({
+            type: 'placements',
+            day,
+            posts: [post],
+            live: false,
+          }),
+        );
       }
     });
   }

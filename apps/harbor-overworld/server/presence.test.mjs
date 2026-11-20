@@ -256,19 +256,22 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
       for (const connection of [a, b]) {
         const message = await connection.until(placed);
         assert.equal(message.day, '2026-11-19');
+        assert.equal(message.live, true);
         assert.deepEqual(message.posts, [expected]);
       }
 
       await stopServer();
       await startServer();
       const viewer = connect(t);
-      assert.deepEqual((await viewer.until(placed)).posts, [expected]);
+      const restored = await viewer.until(placed);
+      assert.equal(restored.live, false);
+      assert.deepEqual(restored.posts, [expected]);
 
       const afterRestore = viewer.received.length;
       viewer.send(placement(authorKey, worldPost.id, otherLocation));
-      assert.deepEqual((await viewer.until(placed, afterRestore)).posts, [
-        expected,
-      ]);
+      const duplicate = await viewer.until(placed, afterRestore);
+      assert.equal(duplicate.live, false);
+      assert.deepEqual(duplicate.posts, [expected]);
 
       await writeFile(clock, String(resetTime));
       const nextDayViewer = connect(t);

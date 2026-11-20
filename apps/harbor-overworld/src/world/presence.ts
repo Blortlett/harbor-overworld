@@ -171,6 +171,10 @@ export function createPresence(
           type: 'placements',
           day: message.day,
           posts: message.posts.filter(isPlacedPost),
+          live:
+            'live' in message && typeof message.live === 'boolean'
+              ? message.live
+              : undefined,
         });
         return;
       }

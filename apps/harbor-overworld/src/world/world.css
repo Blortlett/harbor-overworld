@@ -313,6 +313,56 @@ a {
 .crosshair.active {
   color: var(--gold);
 }
+#falling-posts {
+  position: absolute;
+  inset: max(104px, 19%) max(12px, var(--safe-right)) auto
+    max(12px, var(--safe-left));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  pointer-events: none;
+}
+#falling-posts > div {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: clamp(104px, 23vw, 210px);
+  animation: falling-post 3.4s both;
+}
+#falling-posts canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 6px 12px #0a130880);
+}
+#falling-posts span {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+@keyframes falling-post {
+  from {
+    transform: translateY(-140%);
+    opacity: 0;
+    animation-timing-function: ease-in;
+  }
+  7% {
+    opacity: 1;
+  }
+  25%,
+  85% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #falling-posts > div {
+    animation: none;
+  }
+}
 #overworld:not(.entered) .crosshair,
 #overworld:has(dialog[open]) .crosshair {
   visibility: hidden;
