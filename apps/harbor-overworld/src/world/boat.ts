@@ -1,14 +1,5 @@
 import { type createPlayerMovement, EYE_HEIGHT } from './movement';
-import {
-  DOCK,
-  ground,
-  MAX_X,
-  MAX_Z,
-  Mesh,
-  MIN_X,
-  MIN_Z,
-  WATER,
-} from './terrain';
+import { DOCK, ground, inWorld, Mesh, WATER } from './terrain';
 import { type Vehicle, VEHICLE_BERTHS } from './vehicles';
 import './boat.css';
 
@@ -85,10 +76,6 @@ function onDock(x: number, z: number) {
   return (
     x >= DOCK.start && x <= DOCK.end && Math.abs(z - DOCK.z) < DOCK.halfWidth
   );
-}
-
-function inWorld(x: number, z: number) {
-  return x >= MIN_X && x < MAX_X && z >= MIN_Z && z < MAX_Z;
 }
 
 function canFloat(pose: BoatPose) {

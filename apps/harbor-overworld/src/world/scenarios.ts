@@ -59,6 +59,13 @@ export const scenarios = {
     yaw: Math.PI,
     segments: [{ frames: 90, forward: 1 }],
   },
+  'open-water': {
+    label: 'Explore far offshore',
+    x: 300,
+    z: -300,
+    yaw: Math.PI / 2,
+    segments: [{ frames: 60, forward: 1 }],
+  },
   shoreline: {
     label: 'Shoreline round trip',
     x: 6.5,
@@ -86,12 +93,11 @@ export const scenarios = {
     king: true,
     segments: [{ frames: 120, ascend: true }, { frames: 100 }],
   },
-  'king-sprint': {
-    label: 'Sprint toward the noticeboard as King',
+  sprint: {
+    label: 'Sprint toward the noticeboard',
     x: boardX,
     z: boardZ + 5,
     stations: 1,
-    king: true,
     segments: [{ frames: 90, forward: 1, sprint: true }],
   },
   tree: {
@@ -177,7 +183,7 @@ export function* replayScenario(
           forward: segment.forward ?? 0,
           sideways: segment.sideways ?? 0,
           ascend: scenario.king && segment.ascend,
-          sprint: scenario.king && segment.sprint,
+          sprint: segment.sprint,
         },
         scene,
       );

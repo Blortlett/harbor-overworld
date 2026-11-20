@@ -15,6 +15,7 @@ import { findLike, setLike } from '../data/likes';
 import { decodePostBundle, eventKeyFromId, type PostData } from '../data/posts';
 import { coatIndex, COATS } from './avatar';
 import { bindBoat } from './boat';
+import { shouldRejoinWorld, watchWorldUpdates } from './build';
 import { bindIdentityDialog } from './connect';
 import { createControls, POINTER_DEGREES } from './controls';
 import { createCrown } from './crown';
@@ -57,6 +58,8 @@ import { SHOT_EFFECT_DURATION, type ShotEffect } from './shot-effects';
 import {
   DOCK,
   ground,
+  inWorld,
+  ISLAND_BOUNDS,
   LANDMARKS,
   MAX_X,
   MAX_Z,
@@ -1377,52 +1380,72 @@ const plane = bindSeaplane(
 );
 const map = element<HTMLCanvasElement>('minimap');
 const mapContext = map.getContext('2d');
-const mapTerrain = document.createElement('canvas');
-mapTerrain.width = map.width;
-mapTerrain.height = map.height;
-const mapBase = mapTerrain.getContext('2d');
-const mapScale = Math.min(
-  (map.width - 14) / (MAX_X - MIN_X),
-  (map.height - 14) / (MAX_Z - MIN_Z),
-);
-const mapX = (MIN_X + MAX_X - map.width / mapScale) / 2;
-const mapZ = (MIN_Z + MAX_Z - map.height / mapScale) / 2;
-for (let y = 0; y < map.height; y++) {
-  for (let x = 0; x < map.width; x++) {
-    if (!mapBase) break;
-    const wx = x / mapScale + mapX;
-    const wz = y / mapScale + mapZ;
-    const land = ground(wx, wz);
-    const n = noise(x, y);
-    mapBase.fillStyle =
-      land < 2
-        ? n > 0.84
-          ? '#2f514e'
-          : '#284843'
-        : trailDistance(wx, wz) < 1.25
-          ? '#9b8350'
-          : land % 4 === 1
-            ? '#586047'
-            : `hsl(73 20% ${24 + land * 0.55 + n * 5}%)`;
-    mapBase.fillRect(x, y, 1, 1);
-  }
-}
-if (mapBase) {
-  for (const { x, z } of LANDMARKS) {
-    const px = Math.round((x - mapX) * mapScale);
-    const pz = Math.round((z - mapZ) * mapScale);
-    mapBase.fillStyle = '#d9dac6';
-    mapBase.fillRect(px - 1, pz, 3, 1);
-    mapBase.fillRect(px, pz - 1, 1, 3);
-  }
-  mapBase.fillStyle = '#ac8554';
-  mapBase.fillRect(
-    (DOCK.start - mapX) * mapScale,
-    (DOCK.z - DOCK.halfWidth - mapZ) * mapScale,
-    (DOCK.end - DOCK.start) * mapScale,
-    DOCK.halfWidth * 2 * mapScale,
+function makeChart(
+  { minX, maxX, minZ, maxZ }: typeof ISLAND_BOUNDS,
+  ocean: boolean,
+) {
+  const canvas = document.createElement('canvas');
+  canvas.width = map.width;
+  canvas.height = map.height;
+  const base = canvas.getContext('2d');
+  const scale = Math.min(
+    (map.width - 14) / (maxX - minX),
+    (map.height - 14) / (maxZ - minZ),
   );
+  const x = (minX + maxX - map.width / scale) / 2;
+  const z = (minZ + maxZ - map.height / scale) / 2;
+  if (!base) return { canvas, scale, x, z };
+
+  for (let py = 0; py < map.height; py++) {
+    for (let px = 0; px < map.width; px++) {
+      const wx = px / scale + x;
+      const wz = py / scale + z;
+      const land = ground(wx, wz);
+      const n = noise(px, py);
+      base.fillStyle =
+        land < 2
+          ? inWorld(wx, wz)
+            ? n > 0.84
+              ? '#2f514e'
+              : '#284843'
+            : '#1d3432'
+          : !ocean && trailDistance(wx, wz) < 1.25
+            ? '#9b8350'
+            : land % 4 === 1
+              ? '#586047'
+              : `hsl(73 20% ${24 + land * 0.55 + n * 5}%)`;
+      base.fillRect(px, py, 1, 1);
+    }
+  }
+
+  for (const landmark of LANDMARKS) {
+    const px = Math.round((landmark.x - x) * scale);
+    const pz = Math.round((landmark.z - z) * scale);
+    base.fillStyle = '#d9dac6';
+    base.fillRect(px - 1, pz, 3, 1);
+    base.fillRect(px, pz - 1, 1, 3);
+  }
+  if (!ocean) {
+    base.fillStyle = '#ac8554';
+    base.fillRect(
+      (DOCK.start - x) * scale,
+      (DOCK.z - DOCK.halfWidth - z) * scale,
+      (DOCK.end - DOCK.start) * scale,
+      DOCK.halfWidth * 2 * scale,
+    );
+  }
+  return { canvas, scale, x, z };
 }
+
+const coastChart = makeChart(ISLAND_BOUNDS, false);
+const oceanChart = makeChart(
+  { minX: MIN_X, maxX: MAX_X, minZ: MIN_Z, maxZ: MAX_Z },
+  true,
+);
+let chart = coastChart;
+const chartName = element('chart-name');
+const chartPostLegend = element('chart-post-legend');
+
 const coordinates = element('coordinates');
 const compassTrack = element('compass-track');
 const ticks = Array.from({ length: 24 }, (_, index) => {
@@ -1443,20 +1466,37 @@ function drawHud(avatars: readonly Avatar[] = []) {
     mark.hidden = Math.abs(angle) > 53;
   }
   if (!mapContext) return;
-  mapContext.drawImage(mapTerrain, 0, 0);
-  mapContext.fillStyle = '#ffca78';
-  const postLocations = STATIONS.slice(0, notices.length).map(([x, z]) => ({
-    x,
-    z,
-  }));
-  for (const { drop } of worldPosts.values()) postLocations.push(drop);
-  for (const { x, z } of postLocations) {
-    mapContext.fillRect(
-      Math.round((x - mapX) * mapScale) - 1,
-      Math.round((z - mapZ) * mapScale) - 1,
-      3,
-      3,
-    );
+  const coastX = (view.x - coastChart.x) * coastChart.scale;
+  const coastZ = (view.z - coastChart.z) * coastChart.scale;
+  const margin = chart === coastChart ? 8 : 14;
+  const nearCoast =
+    coastX >= margin &&
+    coastX <= map.width - margin &&
+    coastZ >= margin &&
+    coastZ <= map.height - margin;
+  const nextChart = nearCoast ? coastChart : oceanChart;
+  if (nextChart !== chart) {
+    chart = nextChart;
+    chartName.textContent = nearCoast ? 'COAST MAP' : 'OCEAN MAP';
+    chartPostLegend.hidden = !nearCoast;
+  }
+  const { canvas, scale: mapScale, x: mapX, z: mapZ } = chart;
+  mapContext.drawImage(canvas, 0, 0);
+  if (nearCoast) {
+    mapContext.fillStyle = '#ffca78';
+    const postLocations = STATIONS.slice(0, notices.length).map(([x, z]) => ({
+      x,
+      z,
+    }));
+    for (const { drop } of worldPosts.values()) postLocations.push(drop);
+    for (const { x, z } of postLocations) {
+      mapContext.fillRect(
+        Math.round((x - mapX) * mapScale) - 1,
+        Math.round((z - mapZ) * mapScale) - 1,
+        3,
+        3,
+      );
+    }
   }
   for (const avatar of avatars) {
     const tint = COATS[coatIndex(avatar.id)].map((channel) =>
@@ -1527,7 +1567,7 @@ function start() {
       ? {
           ...controls.movement(time),
           ascend: kingMode && controls.ascending,
-          sprint: kingMode && controls.sprinting,
+          sprint: controls.sprinting,
         }
       : undefined;
     boat.follow(presence.vehicle('boat', time));
@@ -1591,6 +1631,7 @@ async function boot() {
     markNetwork('loading', 'PLAYGROUND', 'Waiting for the sample feed');
   }
   start();
+  if (shouldRejoinWorld()) enter(false);
   if (import.meta.env.DEV && import.meta.env.MODE === 'playground') {
     const { connectControlBridge } = await import('./control-bridge');
     connectControlBridge(controls);
@@ -1598,6 +1639,7 @@ async function boot() {
   void loadPosts();
 }
 
+watchWorldUpdates(() => entered);
 void boot();
 
 window.addEventListener('pagehide', () => {

@@ -1,7 +1,7 @@
 import type { PlanePose } from './flight.ts';
 import type { RoomVehicles, VehicleReport } from './vehicles.ts';
 import { MAX_PITCH } from './movement.ts';
-import { MAX_X, MAX_Z, MIN_X, MIN_Z, WATER } from './terrain.ts';
+import { inWorld, WATER } from './terrain.ts';
 
 export const PRESENCE_PATH = '/presence';
 export const PRESENCE_INTERVAL = 100;
@@ -153,7 +153,13 @@ export type PlacementUpdate = {
 export type PresenceMessage =
   | PlotSnapshot
   | PlacementUpdate
-  | { type: 'welcome'; id: number; slot: number; respawn?: Respawn }
+  | {
+      type: 'welcome';
+      id: number;
+      slot: number;
+      commit?: string;
+      respawn?: Respawn;
+    }
   | Gunshot
   | {
       type: 'players';
@@ -210,11 +216,8 @@ function isPostLocation(
     typeof id === 'string' &&
     /^(?:[a-f0-9]{2}){1,200}$/.test(id) &&
     typeof x === 'number' &&
-    x >= MIN_X &&
-    x < MAX_X &&
     typeof z === 'number' &&
-    z >= MIN_Z &&
-    z < MAX_Z
+    inWorld(x, z)
   );
 }
 
@@ -265,14 +268,11 @@ export function isPose(value: unknown): value is Pose {
   const { x, y, z, yaw } = value as Partial<Pose>;
   return (
     typeof x === 'number' &&
-    x >= MIN_X &&
-    x < MAX_X &&
     typeof y === 'number' &&
     y >= 0 &&
     y <= 80 &&
     typeof z === 'number' &&
-    z >= MIN_Z &&
-    z < MAX_Z &&
+    inWorld(x, z) &&
     typeof yaw === 'number' &&
     Math.abs(yaw) <= Math.PI
   );

@@ -7,10 +7,7 @@ import {
 import {
   ground,
   LIGHTHOUSE,
-  MAX_X,
-  MAX_Z,
-  MIN_X,
-  MIN_Z,
+  ISLAND_BOUNDS,
   SPAWN,
   STATIONS,
   trailDistance,
@@ -26,8 +23,9 @@ const sites: CrownLocation[] = [];
 const roomSpawns = Array.from({ length: ROOM_CAPACITY }, (_, slot) =>
   spawnView(slot),
 );
-for (let z = MIN_Z + 0.5; z < MAX_Z; z++) {
-  for (let x = MIN_X + 0.5; x < MAX_X; x++) {
+const { minX, maxX, minZ, maxZ } = ISLAND_BOUNDS;
+for (let z = minZ + 0.5; z < maxZ; z++) {
+  for (let x = minX + 0.5; x < maxX; x++) {
     if (
       ground(x, z) > WATER &&
       trailDistance(x, z) <= 0.5 &&

@@ -83,10 +83,12 @@ export function bindMobileControls(
   const stick = control(game, '#move-stick');
   const thumb = control(game, '#move-thumb');
   const jumpButton = control(game, '#touch-jump');
+  const sprintButton = control(game, '#touch-sprint');
   const chatButton = control(game, '#touch-chat');
   const shootButton = control(game, '#touch-shoot');
   let movePointer: number | undefined;
   let jumpPointer: number | undefined;
+  let sprintPointer: number | undefined;
   let lookPointer: { id: number; x: number; y: number } | undefined;
 
   function resetMovement() {
@@ -113,10 +115,19 @@ export function bindMobileControls(
       jumpButton.releasePointerCapture(pointer);
   }
 
+  function resetSprint() {
+    const pointer = sprintPointer;
+    sprintPointer = undefined;
+    run('sprint', false);
+    if (pointer !== undefined && sprintButton.hasPointerCapture(pointer))
+      sprintButton.releasePointerCapture(pointer);
+  }
+
   function reset() {
     resetMovement();
     resetLook();
     resetJump();
+    resetSprint();
   }
 
   function move(event: PointerEvent) {
@@ -172,6 +183,9 @@ export function bindMobileControls(
     jumpButton.addEventListener(type, ({ pointerId }) => {
       if (pointerId === jumpPointer) resetJump();
     });
+    sprintButton.addEventListener(type, ({ pointerId }) => {
+      if (pointerId === sprintPointer) resetSprint();
+    });
   }
 
   const coarse = matchMedia('(pointer: coarse)');
@@ -200,6 +214,13 @@ export function bindMobileControls(
     jumpButton.setPointerCapture(jumpPointer);
     run('ascend', true);
     run('jump');
+  });
+  sprintButton.addEventListener('pointerdown', (event) => {
+    if (!hasStarted() || sprintPointer !== undefined || event.button !== 0)
+      return;
+    sprintPointer = event.pointerId;
+    sprintButton.setPointerCapture(sprintPointer);
+    run('sprint', true);
   });
   jumpButton.addEventListener('click', (event) => {
     if (event.detail === 0) run('jump');

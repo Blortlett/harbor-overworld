@@ -772,7 +772,8 @@ button.text-link {
 }
 .entered #world,
 .move-stick,
-.touch-actions {
+.touch-actions,
+#touch-sprint {
   touch-action: none;
 }
 .touch-input .welcome {
@@ -832,7 +833,16 @@ button.text-link {
   gap: 8px;
   pointer-events: auto;
 }
-.touch-actions button {
+.touch-movement {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+#touch-sprint {
+  pointer-events: auto;
+}
+.touch-actions button,
+#touch-sprint {
   min-width: 55px;
   min-height: 48px;
   padding: 0 9px;
@@ -840,7 +850,8 @@ button.text-link {
   font-size: 14px;
   font-weight: 700;
 }
-.touch-actions button:active {
+.touch-actions button:active,
+#touch-sprint:active {
   border-color: var(--gold);
   color: var(--gold);
 }

@@ -88,7 +88,7 @@ export const controlCommands = {
   ),
   jump: command('Jump.'),
   ascend: command('Hold or release King ascent.', toggle('held')),
-  sprint: command('Hold or release King sprint.', toggle('held')),
+  sprint: command('Hold or release sprint.', toggle('held')),
   shoot: command('Fire while wearing the crown.'),
   size: command('Cycle avatar size while wearing the crown.'),
   boat: command('Board or disembark from the boat.'),

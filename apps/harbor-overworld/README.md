@@ -14,7 +14,9 @@ Follow the coast east of the spawn point to find the dock. Press **F** or tap
 **Board boat** to get aboard. Hold **W** to accelerate, use **S** to brake
 and reverse, and steer with **A/D**. The touch joystick does the same.
 Press **F** or tap **Leave boat** to get out. Everyone in the room sees
-where the boat and seaplane move and where they are parked.
+where the boat and seaplane move and where they are parked. You can travel
+all the way around the island. The map zooms out offshore to show the full
+ocean and its navigable limits.
 
 Follow the trail south from the harbor to loop through the stone arch or
 take the coastal fork to the lookout beacon. Both routes have noticeboard
@@ -27,6 +29,9 @@ pulling up to loop once you have altitude. Keep holding **W** to accelerate.
 Use **S** to brake, or keep holding it on water to reverse. Press **G** to
 leave once stopped. On touchscreens, use the joystick for throttle and
 steering, and hold **Climb** or **Descend** for pitch.
+
+Hold **Shift** or the touch **Sprint** button while moving to run at twice
+walking speed.
 
 Follow the gold beacon and walk into the crown to become King for one
 minute. The room shows who is King and how much time remains. The crown
@@ -210,6 +215,11 @@ retries by commit SHA. Download both archives by tag and switch the static
 directory only after extraction succeeds. Retain the prior directory and
 server bundle for rollback. Compare the new manifest's `presenceSha256` to
 the installed bundle's SHA-256 and restart presence only when it changes.
+
+Each release gives the room server a new build hash, so the deployment
+restarts it even when the only changes are in the browser. Open game tabs
+check `/build.json` and reload when the commit changes. Players who already
+entered rejoin at spawn.
 
 The verification job checks the live `/build.json` commit and then joins two
 clients to confirm they see the same room and receive populated noticeboards.

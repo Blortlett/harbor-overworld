@@ -47,7 +47,8 @@ async function checkRoom() {
           reject(
             new Error(
               `Room check timed out. Joined ${peers.filter((peer) => peer.id).length}/2 clients, ` +
-                `with ${peers.filter((peer) => peer.papers?.length).length}/2 populated noticeboard snapshots.`,
+                `with ${peers.filter((peer) => peer.papers?.length).length}/2 populated noticeboard snapshots. ` +
+                `Room builds: ${peers.map((peer) => peer.commit ?? 'unknown').join(', ')}.`,
             ),
           ),
         15_000,
@@ -72,6 +73,7 @@ async function checkRoom() {
           const message = JSON.parse(data);
           if (message.type === 'welcome') {
             peer.id = message.id;
+            peer.commit = message.commit;
             socket.send(JSON.stringify({ x, y: 5, z: 12, yaw: 0 }));
           } else if (message.type === 'players') {
             peer.players = message.players;
@@ -84,6 +86,7 @@ async function checkRoom() {
             peers.every(
               (current) =>
                 current.id &&
+                (commit === '--room-only' || current.commit === commit) &&
                 current.papers?.[0] &&
                 current.papers[0] === peers[0].papers?.[0] &&
                 peers.every((other) =>
@@ -107,4 +110,12 @@ if (commit !== '--room-only') {
   await waitForBuild();
   console.log(`${origin} is serving ${commit}.`);
 }
-await checkRoom();
+for (;;) {
+  try {
+    await checkRoom();
+    break;
+  } catch (error) {
+    if (Date.now() >= deadline) throw error;
+    await delay(2000);
+  }
+}

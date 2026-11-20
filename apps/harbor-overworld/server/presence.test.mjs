@@ -259,7 +259,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   );
 
   await t.test(
-    'shares moving vehicles, excludes a second driver, and keeps parked positions',
+    'shares offshore vehicles, excludes a second driver, and keeps parked positions',
     async (t) => {
       const [pilot, viewer, skipper] = [connect(t), connect(t), connect(t)];
       const [pilotWelcome, , skipperWelcome] = await Promise.all(
@@ -268,8 +268,14 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
         ),
       );
       const { vehicles } = await viewer.until((m) => m.type === 'players');
-      const boat = { ...vehicles.boat.pose, x: vehicles.boat.pose.x + 2 };
-      const plane = { ...vehicles.plane.pose, y: 14, z: 4, pitch: -2.9 };
+      const boat = { ...vehicles.boat.pose, x: 240, z: 310 };
+      const plane = {
+        ...vehicles.plane.pose,
+        x: -250,
+        y: 14,
+        z: -300,
+        pitch: -2.9,
+      };
       const drive = (kind, pose, driving = true) => ({
         ...pose,
         vehicle: { kind, pose, driving },

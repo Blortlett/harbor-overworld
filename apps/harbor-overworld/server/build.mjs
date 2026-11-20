@@ -38,6 +38,7 @@ await build({
     js: `${licenses.join('\n')}\nimport { createRequire } from 'node:module'; const require = createRequire(import.meta.url);`,
   },
   define: {
+    __OVERWORLD_BUILD__: JSON.stringify(process.env.GITHUB_SHA ?? ''),
     'process.env.WS_NO_BUFFER_UTIL': 'true',
     'process.env.WS_NO_UTF_8_VALIDATE': 'true',
   },

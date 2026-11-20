@@ -1,9 +1,6 @@
 import {
   ground,
-  MAX_X,
-  MAX_Z,
-  MIN_X,
-  MIN_Z,
+  inWorld,
   SPAWN,
   stationPenetration,
   STATION_TOP,
@@ -193,7 +190,7 @@ function walk(
   }
 
   function clear(x: number, z: number) {
-    if (x < MIN_X || x >= MAX_X || z < MIN_Z || z >= MAX_Z) return false;
+    if (!inWorld(x, z)) return false;
     const current = ground(view.x, view.z);
     const next = ground(x, z);
     const terrainLimit =
@@ -225,7 +222,7 @@ function walk(
     const dz =
       (-Math.cos(view.yaw) * forward + Math.sin(view.yaw) * sideways) * speed;
     // Check each sprint increment at walking speed to avoid skipping obstacles.
-    const steps = sprint ? 8 : 1;
+    const steps = sprint ? 2 : 1;
     for (let step = 0; step < steps; step++) {
       if (dx && clear(view.x + dx, view.z)) view.x += dx;
       if (dz && clear(view.x, view.z + dz)) view.z += dz;

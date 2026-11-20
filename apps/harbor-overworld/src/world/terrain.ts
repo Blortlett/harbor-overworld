@@ -121,10 +121,23 @@ function shore(z: number) {
 }
 
 export const WATER = 1.1;
-export const MIN_X = -89;
-export const MAX_X = 46;
-export const MIN_Z = -107;
-export const MAX_Z = 76;
+export const MIN_X = -440;
+export const MAX_X = 400;
+export const MIN_Z = -460;
+export const MAX_Z = 430;
+
+export const ISLAND_BOUNDS = { minX: -104, maxX: 46, minZ: -122, maxZ: 94 };
+
+export function inWorld(x: number, z: number) {
+  return x >= MIN_X && x < MAX_X && z >= MIN_Z && z < MAX_Z;
+}
+
+function coastDistance(x: number, z: number) {
+  const west = -96 + Math.sin(z * 0.11) * 4 + Math.cos(z * 0.19) * 2;
+  const north = -114 + Math.sin((x + 53) * 0.12) * 5;
+  const south = 85 + Math.sin((x + 3) * 0.13) * 5;
+  return Math.min(shore(z) - x, x - west, z - north, south - z);
+}
 
 function ridge(
   x: number,
@@ -142,7 +155,7 @@ function ridge(
 }
 
 function terrainHeight(x: number, z: number) {
-  const coast = shore(z) - x;
+  const coast = coastDistance(x, z);
   if (coast < -1) return 0;
   if (coast < 1.4) return 1;
   const hills =
@@ -167,19 +180,20 @@ function terrainHeight(x: number, z: number) {
   return Math.max(2, Math.floor(Math.min(height, 1 + coast * 0.78)));
 }
 
-const WIDTH = MAX_X - MIN_X;
-const heights = new Uint8Array(WIDTH * (MAX_Z - MIN_Z));
-for (let z = MIN_Z; z < MAX_Z; z++) {
-  for (let x = MIN_X; x < MAX_X; x++) {
-    heights[(z - MIN_Z) * WIDTH + x - MIN_X] = terrainHeight(x + 0.5, z + 0.5);
+const { minX, maxX, minZ, maxZ } = ISLAND_BOUNDS;
+const WIDTH = maxX - minX;
+const heights = new Uint8Array(WIDTH * (maxZ - minZ));
+for (let z = minZ; z < maxZ; z++) {
+  for (let x = minX; x < maxX; x++) {
+    heights[(z - minZ) * WIDTH + x - minX] = terrainHeight(x + 0.5, z + 0.5);
   }
 }
 
 export function ground(x: number, z: number) {
   x = Math.floor(x);
   z = Math.floor(z);
-  if (x < MIN_X || x >= MAX_X || z < MIN_Z || z >= MAX_Z) return 0;
-  return heights[(z - MIN_Z) * WIDTH + x - MIN_X];
+  if (x < minX || x >= maxX || z < minZ || z >= maxZ) return 0;
+  return heights[(z - minZ) * WIDTH + x - minX];
 }
 
 export type Color = readonly [number, number, number];
@@ -501,13 +515,13 @@ export function makeTerrain() {
   const mesh = new Mesh();
   const obstacles: Obstacle[] = [];
   const { x: lightX, z: lightZ } = LIGHTHOUSE;
-  for (let z = MIN_Z; z < MAX_Z; z++) {
-    for (let x = MIN_X; x < MAX_X; x++) {
+  for (let z = minZ; z < maxZ; z++) {
+    for (let x = minX; x < maxX; x++) {
       const y = ground(x, z);
       if (!y) continue;
       const n = noise(x, z);
       const trail = trailDistance(x + 0.5, z + 0.5);
-      const coast = y < 4 && shore(z) - x < 4.2;
+      const coast = y < 4 && coastDistance(x + 0.5, z + 0.5) < 4.2;
       const rocky = y >= 19 && n > 0.28;
       const onTrail = trail < 1.37 + n * 0.38;
       const top = coast
@@ -626,11 +640,12 @@ export function makeTerrain() {
     mesh.box(x, y, z, 0.22, 0.79, 0.22, clay, 2);
     mesh.box(x - 0.05, y + 0.68, z - 0.05, 0.32, 0.16, 0.32, basalt);
   }
+  const horizon = 1100;
   mesh.quad(
-    [-180, WATER, 180],
-    [260, WATER, 180],
-    [260, WATER, -230],
-    [-180, WATER, -230],
+    [MIN_X - horizon, WATER, MAX_Z + horizon],
+    [MAX_X + horizon, WATER, MAX_Z + horizon],
+    [MAX_X + horizon, WATER, MIN_Z - horizon],
+    [MIN_X - horizon, WATER, MIN_Z - horizon],
     [0.19, 0.37, 0.39],
     1,
   );

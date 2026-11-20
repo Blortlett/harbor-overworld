@@ -60,6 +60,7 @@ const multiplayer: Plugin = {
 };
 
 export default defineConfig({
+  define: { __OVERWORLD_BUILD__: JSON.stringify(process.env.GITHUB_SHA ?? '') },
   plugins: [wasmAsUrl, licenseNotices, multiplayer, controlBridge],
   server: {
     port: 5173,

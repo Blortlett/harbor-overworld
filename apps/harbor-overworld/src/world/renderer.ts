@@ -50,6 +50,14 @@ const sky = `
     float light = pow(max(0.0, dot(normalize(vec3(ray.x, 0.0, ray.z)), vec3(.58, 0.0, -.815))), 4.0);
     return mix(vec3(.57,.63,.60), vec3(.99,.67,.40), .28 + light * .72);
   }
+  vec3 skyTint(vec3 ray) {
+    float h = max(0.0, ray.y);
+    vec3 color = mix(horizon(ray), vec3(.155,.30,.33), smoothstep(0.0,.70,h));
+    color += vec3(.12,.025,.02) * exp(-abs(h-.15) * 6.0);
+    vec3 sun = normalize(vec3(.52,.159,-.84));
+    vec2 sunPos = vec2(dot(ray-sun,vec3(.85,0.0,.53)), ray.y-sun.y);
+    return color + vec3(.19,.125,.055) * exp(-length(sunPos)*7.0);
+  }
 `;
 
 const skyVertex = `
@@ -67,13 +75,9 @@ const skyFragment = `
   void main() {
     vec3 ray = normalize(forward + right * screen.x / scale.x + up * screen.y / scale.y);
     float h = max(0.0, ray.y);
-    vec3 warm = horizon(ray);
-    vec3 color = mix(warm, vec3(.155,.30,.33), smoothstep(0.0,.70,h));
-    color += vec3(.12,.025,.02) * exp(-abs(h-.15) * 6.0);
+    vec3 color = skyTint(ray);
     vec3 sun = normalize(vec3(.52,.159,-.84));
     vec2 sunPos = vec2(dot(ray-sun,vec3(.85,0.0,.53)), ray.y-sun.y);
-    float distance = length(sunPos);
-    color += vec3(.19,.125,.055) * exp(-distance*7.0);
     if (dot(ray,sun) > .0) {
       vec2 sunPixel = floor(sunPos * 183.0 + .5) / 183.0;
       color = mix(color, vec3(1.0,.91,.66), step(length(sunPixel), .052));
@@ -122,7 +126,7 @@ const worldVertex = `
     #endif
     vec3 relative = p - eye;
     float depth = dot(relative, forward);
-    gl_Position = vec4(dot(relative,right)*scale.x, dot(relative,up)*scale.y, depth * 1.00045 - .101, depth);
+    gl_Position = vec4(dot(relative,right)*scale.x, dot(relative,up)*scale.y, depth * 1.00008 - .101, depth);
     color = rgb;
     position = p;
     material = surface < 4.0 ? surface : 0.0;
@@ -153,7 +157,10 @@ const worldFragment = `
       paint = mix(vec3(.20,.36,.36), vec3(.50,.56,.46), sunPath * .78);
       paint += glint*mix(vec3(.10,.16,.14), vec3(.43,.33,.13), sunPath);
       paint += .049 * step(.74,band);
-      mist = 1.0 - exp(-distance * .0075);
+      float seaMist = (1.0 - exp(-distance * .0075)) * .84;
+      vec3 sea = mix(paint, fog, seaMist);
+      gl_FragColor = vec4(mix(sea, skyTint(ray), smoothstep(260.0, 900.0, distance)), 1.0);
+      return;
     } else if (material != 3.0) {
       vec3 pixel = floor(position * 12.0 + .001);
       paint *= .88 + hash(pixel) * .23;
@@ -179,7 +186,7 @@ const noticeVertex = `
   void main() {
     relative = point - eye;
     float depth = dot(relative, forward);
-    gl_Position = vec4(dot(relative,right)*scale.x, dot(relative,up)*scale.y, depth * 1.00045 - .101, depth);
+    gl_Position = vec4(dot(relative,right)*scale.x, dot(relative,up)*scale.y, depth * 1.00008 - .101, depth);
     uv = paperUv;
   }
 `;

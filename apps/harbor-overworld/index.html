@@ -66,7 +66,10 @@
       </section>
       <p class="toast plate" id="toast" role="status" hidden></p>
       <fieldset class="touch-controls" aria-label="Touch game controls">
-        <div class="move-stick plate" id="move-stick" aria-hidden="true"><span id="move-thumb"></span></div>
+        <div class="touch-movement">
+          <button type="button" class="plate" id="touch-sprint">Sprint</button>
+          <div class="move-stick plate" id="move-stick" aria-hidden="true"><span id="move-thumb"></span></div>
+        </div>
         <div class="touch-actions">
           <button type="button" class="plate" id="touch-jump">Jump</button>
           <button type="button" class="plate" id="touch-shoot" hidden>Shoot</button>
@@ -80,16 +83,16 @@
           <div class="control-row"><span class="key-group"><kbd>E</kbd></span><span>Turn page</span></div>
           <div class="control-row"><span class="key-group"><kbd>Space</kbd></span><span id="jump-hint">Jump</span></div>
           <button type="button" class="control-row" id="open-chat"><span class="key-group"><kbd>Enter</kbd></span><span>Chat</span></button>
+          <div class="control-row"><span class="key-group"><kbd>Shift</kbd></span><span>Sprint</span></div>
           <div id="king-controls" hidden>
             <div class="control-row"><span class="key-group"><kbd>K</kbd></span><span>Cycle size</span></div>
-            <div class="control-row"><span class="key-group"><kbd>Shift</kbd></span><span>Sprint</span></div>
             <div class="control-row"><span class="key-group"><kbd>Click</kbd></span><span>Shoot</span></div>
           </div>
         </fieldset>
         <div class="map plate">
-          <div class="map-heading"><span>COAST MAP</span><span>N</span></div>
+          <div class="map-heading"><span id="chart-name">COAST MAP</span><span>N</span></div>
           <canvas id="minimap" width="156" height="120" aria-label="Map showing players, posts, vehicles, and landmarks"></canvas>
-          <div class="map-footer"><span id="coordinates">0 / 0</span><span><i></i> POST</span></div>
+          <div class="map-footer"><span id="coordinates">0 / 0</span><span id="chart-post-legend"><i></i> POST</span></div>
         </div>
       </footer>
       <dialog class="panel chat-panel" id="chat-panel" aria-labelledby="chat-heading">

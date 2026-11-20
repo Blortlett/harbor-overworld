@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { HttpServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
+import { BUILD_COMMIT } from '../src/world/build.ts';
 import { createCrown } from '../src/world/crown.ts';
 import { EYE_HEIGHT, spawnView } from '../src/world/movement.ts';
 import {
@@ -322,6 +323,7 @@ export function attachPresence(
       });
       const welcome: PresenceMessage = {
         type: 'welcome',
+        commit: BUILD_COMMIT || undefined,
         id: client.id,
         slot: client.slot,
         respawn: client.respawnPending

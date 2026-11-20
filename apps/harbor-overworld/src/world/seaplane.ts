@@ -4,11 +4,8 @@ import {
   type Color,
   DOCK,
   ground,
-  MAX_X,
-  MAX_Z,
+  inWorld,
   Mesh,
-  MIN_X,
-  MIN_Z,
   type Obstacle,
   WATER,
 } from './terrain';
@@ -169,10 +166,7 @@ export function bindSeaplane(
       planeOffset(flight.pose, -1.65, 0),
     ].find(
       (point) =>
-        point.x >= MIN_X &&
-        point.x < MAX_X &&
-        point.z >= MIN_Z &&
-        point.z < MAX_Z &&
+        inWorld(point.x, point.z) &&
         Math.hypot(point.x - x, point.z - z) <= EXIT_RANGE &&
         ground(point.x, point.z) <= DOCK.deck,
     );

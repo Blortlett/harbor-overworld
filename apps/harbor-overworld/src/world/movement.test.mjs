@@ -3,7 +3,14 @@ import { test } from 'node:test';
 import { fly, parkedPlane } from './flight.ts';
 import { createPlayerMovement, EYE_HEIGHT } from './movement.ts';
 import { replayScenario, scenarios, scenarioView } from './scenarios.ts';
-import { ground, makeTerrain, WATER } from './terrain.ts';
+import {
+  ground,
+  inWorld,
+  ISLAND_BOUNDS,
+  makeTerrain,
+  MAX_X,
+  WATER,
+} from './terrain.ts';
 
 const { obstacles } = makeTerrain();
 
@@ -38,13 +45,18 @@ test('king-ascent rises at 11 units per second while held and falls when release
   assert.equal(frames.at(-1).y, start);
 });
 
-test('king-sprint is eight times as fast and stops at a noticeboard', () => {
-  const scene = scenarios['king-sprint'];
+test('everyone can sprint at twice walking speed and stops at a noticeboard', () => {
+  const scene = scenarios.sprint;
   const sprint = replay(scene);
-  const walk = replay({ ...scene, king: false });
-  assert.ok(Math.abs(scene.z - sprint[3].z - 8 * (scene.z - walk[3].z)) < 1e-9);
+  const king = replay({ ...scene, king: true });
+  const walk = replay({
+    ...scene,
+    segments: scene.segments.map((segment) => ({ ...segment, sprint: false })),
+  });
+  assert.ok(Math.abs(scene.z - sprint[3].z - 2 * (scene.z - walk[3].z)) < 1e-9);
+  assert.deepEqual(sprint, king);
   assert.ok(sprint.at(-1).z > scene.z - 5);
-  assert.equal(sprint.at(-1).z, sprint[30].z);
+  assert.equal(sprint.at(-1).z, sprint[60].z);
 });
 
 test('lighthouse clears the lighthouse footprint with chained King jumps', () => {
@@ -138,4 +150,38 @@ test('holding the yoke completes a loop and releasing it holds pitch', () => {
     obstacles,
   );
   assert.ok(Math.abs(level.pose.pitch - flight.pose.pitch) < 1e-12);
+});
+
+test('open water surrounds the island and supports movement far from shore', () => {
+  const { minX, maxX, minZ, maxZ } = ISLAND_BOUNDS;
+  // Trace a rectangle wide enough to pass the complete island and its dock.
+  for (let x = minX - 20; x <= maxX + 20; x++) {
+    for (const z of [minZ - 20, maxZ + 20]) {
+      assert.ok(inWorld(x, z) && ground(x, z) < WATER);
+    }
+  }
+  for (let z = minZ - 20; z <= maxZ + 20; z++) {
+    for (const x of [minX - 20, maxX + 20]) {
+      assert.ok(inWorld(x, z) && ground(x, z) < WATER);
+    }
+  }
+  const scene = scenarios['open-water'];
+  assert.ok(replay(scene).at(-1).x > scene.x + 4);
+
+  let plane = {
+    ...parkedPlane({
+      x: MAX_X - 10,
+      y: 20,
+      z: -300,
+      yaw: Math.PI / 2,
+      pitch: 0,
+    }),
+    speed: 30,
+    airborne: true,
+  };
+  for (let frame = 0; frame < 60; frame++) {
+    plane = fly(plane, 1 / 60, { forward: 0, steer: 0, climb: 0 }, obstacles);
+    assert.ok(!('crash' in plane));
+  }
+  assert.equal(plane.pose.x, MAX_X - 4);
 });
