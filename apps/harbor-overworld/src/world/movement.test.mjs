@@ -45,18 +45,19 @@ test('king-ascent rises at 11 units per second while held and falls when release
   assert.equal(frames.at(-1).y, start);
 });
 
-test('everyone can sprint at twice walking speed and stops at a noticeboard', () => {
+test('sprinting doubles walking speed for players and gives King an eightfold boost', () => {
   const scene = scenarios.sprint;
   const sprint = replay(scene);
-  const king = replay({ ...scene, king: true });
+  const king = replay(scenarios['king-sprint']);
   const walk = replay({
     ...scene,
     segments: scene.segments.map((segment) => ({ ...segment, sprint: false })),
   });
   assert.ok(Math.abs(scene.z - sprint[3].z - 2 * (scene.z - walk[3].z)) < 1e-9);
-  assert.deepEqual(sprint, king);
+  assert.ok(Math.abs(scene.z - king[3].z - 8 * (scene.z - walk[3].z)) < 1e-9);
   assert.ok(sprint.at(-1).z > scene.z - 5);
   assert.equal(sprint.at(-1).z, sprint[60].z);
+  assert.equal(king.at(-1).z, sprint.at(-1).z);
 });
 
 test('lighthouse clears the lighthouse footprint with chained King jumps', () => {

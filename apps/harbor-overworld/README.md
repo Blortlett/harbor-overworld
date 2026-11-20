@@ -30,8 +30,8 @@ Use **S** to brake, or keep holding it on water to reverse. Press **G** to
 leave once stopped. On touchscreens, use the joystick for throttle and
 steering, and hold **Climb** or **Descend** for pitch.
 
-Hold **Shift** or the touch **Sprint** button while moving to run at twice
-walking speed.
+Hold **Shift** or the touch **Sprint** button while moving. Players sprint at
+twice walking speed, and the King sprints at eight times walking speed.
 
 Follow the gold beacon and walk into the crown to become King for one
 minute. The room shows who is King and how much time remains. The crown

@@ -27,6 +27,14 @@ type Scenario = {
 
 const [boardX, boardZ] = STATIONS[0];
 
+const sprint: Scenario = {
+  label: 'Sprint toward the noticeboard',
+  x: boardX,
+  z: boardZ + 5,
+  stations: 1,
+  segments: [{ frames: 90, forward: 1, sprint: true }],
+};
+
 export const scenarios = {
   shooting: {
     label: 'Practice King Mode',
@@ -93,13 +101,8 @@ export const scenarios = {
     king: true,
     segments: [{ frames: 120, ascend: true }, { frames: 100 }],
   },
-  sprint: {
-    label: 'Sprint toward the noticeboard',
-    x: boardX,
-    z: boardZ + 5,
-    stations: 1,
-    segments: [{ frames: 90, forward: 1, sprint: true }],
-  },
+  sprint,
+  'king-sprint': { ...sprint, label: 'Sprint as King', king: true },
   tree: {
     label: 'Escape a tree and walk back into it',
     x: -5.5,
@@ -184,6 +187,7 @@ export function* replayScenario(
           sideways: segment.sideways ?? 0,
           ascend: scenario.king && segment.ascend,
           sprint: segment.sprint,
+          king: scenario.king,
         },
         scene,
       );

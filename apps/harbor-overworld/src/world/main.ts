@@ -1568,6 +1568,7 @@ function start() {
           ...controls.movement(time),
           ascend: kingMode && controls.ascending,
           sprint: controls.sprinting,
+          king: kingMode,
         }
       : undefined;
     boat.follow(presence.vehicle('boat', time));

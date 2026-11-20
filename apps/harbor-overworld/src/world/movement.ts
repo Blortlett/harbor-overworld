@@ -29,6 +29,7 @@ type MovementInput = {
   look?: number;
   ascend?: boolean;
   sprint?: boolean;
+  king?: boolean;
 };
 export type CollisionScene = {
   obstacles: readonly Obstacle[];
@@ -145,7 +146,7 @@ function obstaclePenetration(obstacle: Obstacle, x: number, z: number) {
 
 function walk(
   view: View,
-  { forward, sideways, sprint }: MovementInput,
+  { forward, sideways, sprint, king }: MovementInput,
   dt: number,
   obstacles: readonly Obstacle[],
   stations: number,
@@ -222,7 +223,7 @@ function walk(
     const dz =
       (-Math.cos(view.yaw) * forward + Math.sin(view.yaw) * sideways) * speed;
     // Check each sprint increment at walking speed to avoid skipping obstacles.
-    const steps = sprint ? 2 : 1;
+    const steps = sprint ? (king ? 8 : 2) : 1;
     for (let step = 0; step < steps; step++) {
       if (dx && clear(view.x + dx, view.z)) view.x += dx;
       if (dz && clear(view.x, view.z + dz)) view.z += dz;
