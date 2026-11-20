@@ -90,6 +90,13 @@ presence ZIP outside the web root and run `node server.mjs` under a service
 supervisor with Node 22. No package install is needed. Each process hosts
 one in-memory room; run one instance and keep TCP 8080 private.
 
+To route shared noticeboard feeds through private proxies, set
+`OVERWORLD_FEED_BASE_URLS` on the presence process to a comma-separated list of
+base URLs, one origin per proxy with no path prefix. Each proxy must accept
+`POST /polycentric.v2.FeedsService/GetExploreFeed`. If unset or blank, the
+presence server uses the public Harbor and Polycentric origins. This setting
+does not change browser traffic or identity verification.
+
 The server listens on `0.0.0.0:8080`. Check it locally with
 `curl -fsS http://127.0.0.1:8080/healthz`. Add this directive inside the
 site's Caddy block (or use the equivalent WebSocket proxy on your server):

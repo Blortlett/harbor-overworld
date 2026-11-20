@@ -16,6 +16,7 @@ import {
   GetPostRequest,
   GetPostResponse,
 } from '../../../packages/js-core/src/proto/polycentric/v2/feeds.ts';
+import { SortPostsBy } from '../../../packages/js-core/src/proto/polycentric/v2/search.ts';
 
 const king = 'cc8ce89f64566ee9efce26d559d50dfd1ef63bb787c5e4d57f1473a0e94d6727';
 const author = 'ab'.repeat(32);
@@ -95,6 +96,25 @@ function grpcResponse(payload: Uint8Array) {
   );
 }
 
+export function exploreFeedResponse(payload: Uint8Array, postSigner: string) {
+  const request = GetExploreFeedRequest.fromBinary(payload);
+  assert.equal(request.pageParams?.limit, 50);
+  assert.equal(request.sortBy, SortPostsBy.LATEST);
+  const next = request.pageParams?.forwardToken;
+  if (next) assert.equal(next, 'regular-posts');
+  const { worldPost, regularPost } = postFixtures(postSigner);
+  return grpcResponse(
+    GetFeedResponse.toBinary(
+      GetFeedResponse.create({
+        eventBundles: [next ? regularPost.bundle : worldPost.bundle],
+        pageInfo: next
+          ? undefined
+          : { hasNextPage: true, endCursor: 'regular-posts' },
+      }),
+    ),
+  );
+}
+
 export function mockHarbor(
   clockFile: string,
   authorizedKey: string,
@@ -113,28 +133,18 @@ export function mockHarbor(
       },
     }),
   );
+  const fetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
+    if (url.hostname === '127.0.0.1') return fetch(input, init);
     assert.ok(
       ['srv.harbor.social', 'srv.polycentric.io'].includes(url.hostname),
     );
     assert.ok(init?.body instanceof Uint8Array);
     const payload = init.body.subarray(5);
     switch (url.pathname.split('/').pop()) {
-      case 'GetExploreFeed': {
-        const next =
-          GetExploreFeedRequest.fromBinary(payload).pageParams?.forwardToken;
-        return grpcResponse(
-          GetFeedResponse.toBinary(
-            GetFeedResponse.create({
-              eventBundles: [next ? regularPost.bundle : worldPost.bundle],
-              pageInfo: next
-                ? undefined
-                : { hasNextPage: true, endCursor: 'regular-posts' },
-            }),
-          ),
-        );
-      }
+      case 'GetExploreFeed':
+        return exploreFeedResponse(payload, postSigner);
       case 'GetPost': {
         const request = GetPostRequest.fromBinary(payload);
         const post = [worldPost, regularPost].find(

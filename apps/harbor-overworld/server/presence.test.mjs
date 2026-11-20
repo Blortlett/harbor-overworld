@@ -8,6 +8,7 @@ import {
 } from 'node:crypto';
 import { once } from 'node:events';
 import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -84,9 +85,8 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     platform: 'node',
     format: 'esm',
   });
-  const { resetTime, postFixtures, signHeader } = await import(
-    pathToFileURL(fixture)
-  );
+  const { resetTime, postFixtures, signHeader, exploreFeedResponse } =
+    await import(pathToFileURL(fixture));
   const { worldPost, regularPost } = postFixtures(authorKey.key);
   await Promise.all([
     copyFile(
@@ -100,13 +100,17 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     ),
   ]);
 
-  async function startServer() {
+  async function startServer(plotsFile = plots, feedBaseUrls) {
     const server = spawn(
       process.execPath,
       ['--import', preload, 'server.mjs'],
       {
         cwd: dir,
-        env: { ...process.env, OVERWORLD_PLOTS_FILE: plots },
+        env: {
+          ...process.env,
+          OVERWORLD_PLOTS_FILE: plotsFile,
+          OVERWORLD_FEED_BASE_URLS: feedBaseUrls,
+        },
         stdio: ['ignore', 'pipe', 'inherit'],
       },
     );
@@ -153,6 +157,70 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
         );
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  await t.test(
+    'loads daily papers through two root-scoped feed origins',
+    async (t) => {
+      const feeds = [createServer(), createServer()];
+      const requests = feeds.map(async (feed, index) => {
+        const seen = [];
+        const signal = AbortSignal.timeout(4000);
+        for (let page = 0; page < (index === 0 ? 1 : 2); page++) {
+          const [request, response] = await once(feed, 'request', { signal });
+          seen.push([request.method, request.url]);
+          const chunks = [];
+          for await (const chunk of request) chunks.push(chunk);
+          if (index === 0) {
+            response.writeHead(503).end();
+            break;
+          }
+          const fixture = exploreFeedResponse(
+            Buffer.concat(chunks).subarray(5),
+            authorKey.key,
+          );
+          response.writeHead(200, {
+            'content-type': fixture.headers.get('content-type'),
+          });
+          response.end(Buffer.from(await fixture.arrayBuffer()));
+        }
+        return seen;
+      });
+      const received = Promise.all(requests);
+      void received.catch(() => {});
+      await Promise.all(
+        feeds.map(async (feed) => {
+          feed.listen(0, '127.0.0.1');
+          await once(feed, 'listening');
+          t.after(() => new Promise((resolve) => feed.close(resolve)));
+        }),
+      );
+      try {
+        await startServer(
+          join(dir, 'override-plots.json'),
+          feeds
+            .map((feed) => ` http://127.0.0.1:${feed.address().port} `)
+            .join(','),
+        );
+        const viewer = connect(t);
+        const [snapshot, feedRequests] = await Promise.all([
+          viewer.until((m) => m.type === 'plots'),
+          received,
+        ]);
+        const expectedRequest = [
+          'POST',
+          '/polycentric.v2.FeedsService/GetExploreFeed',
+        ];
+        assert.deepEqual(feedRequests, [
+          [expectedRequest],
+          [expectedRequest, expectedRequest],
+        ]);
+        assert.deepEqual(snapshot.papers, [regularPost.paper]);
+      } finally {
+        await stopServer?.();
+        stopServer = undefined;
       }
     },
   );

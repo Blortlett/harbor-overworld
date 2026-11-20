@@ -23,7 +23,13 @@ import {
 import { STATIONS } from '../src/world/terrain.ts';
 import { verifyProof } from './signature.ts';
 
-const feeds = ['https://srv.harbor.social', 'https://srv.polycentric.io'].map(
+const configuredFeedUrls = process.env.OVERWORLD_FEED_BASE_URLS?.split(',')
+  .map((url) => url.trim())
+  .filter(Boolean);
+const feedUrls = configuredFeedUrls?.length
+  ? configuredFeedUrls
+  : ['https://srv.harbor.social', 'https://srv.polycentric.io'];
+const feeds = feedUrls.map(
   (baseUrl) =>
     new FeedsServiceClient(
       new GrpcWebFetchTransport({ baseUrl, format: 'binary' }),
