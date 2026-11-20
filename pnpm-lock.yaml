@@ -531,6 +531,28 @@ importers:
         specifier: ^0.21.5
         version: 0.21.5(@rspack/core@1.7.11)(esbuild@0.28.2)(rolldown@1.2.18)(rollup@4.64.10)(typescript@6.0.3)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))(webpack@5.112.2)
 
+  apps/harbor-overworld:
+    dependencies:
+      '@polycentric/js-browser':
+        specifier: workspace:*
+        version: link:../../packages/js-browser
+      '@polycentric/js-core':
+        specifier: workspace:*
+        version: link:../../packages/js-core
+      '@polycentric/rs-core-wasm':
+        specifier: workspace:*
+        version: link:../../packages/rs-core-wasm
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vite:
+        specifier: 8.3.8
+        version: 8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1)
+
   docs:
     dependencies:
       '@bufbuild/protobuf':

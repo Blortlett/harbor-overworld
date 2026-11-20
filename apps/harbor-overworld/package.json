@@ -1,0 +1,22 @@
+{
+  "name": "harbor-overworld",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@polycentric/js-browser": "workspace:*",
+    "@polycentric/js-core": "workspace:*",
+    "@polycentric/rs-core-wasm": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite": "8.3.8"
+  }
+}

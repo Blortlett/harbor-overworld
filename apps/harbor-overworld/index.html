@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101712" />
+    <meta name="description" content="Walk the coast, find live Harbor posts, and publish from the world." />
+    <title>Harbor Overworld</title>
+    <link rel="icon" href="/favicon.ico" />
+  </head>
+  <body>
+    <main id="overworld" aria-label="Harbor Overworld">
+      <canvas id="world" aria-label="First-person view of a block-built coastal landscape"></canvas>
+      <div class="vignette" aria-hidden="true"></div>
+      <header class="hud-top">
+        <a class="brand plate" href="https://harbor.social/" target="_blank" rel="noopener" aria-label="Harbor feed">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span><strong>HARBOR</strong><small>OVERWORLD</small></span>
+        </a>
+        <div class="compass" aria-hidden="true">
+          <div id="compass-track"></div><i></i>
+        </div>
+        <button type="button" class="network plate" id="refresh" aria-label="Refresh live posts">
+          <span class="network-lamp" id="network-lamp"></span>
+          <span><strong id="network-name">CONNECTING</strong><small id="network-detail">Harbor feed</small></span>
+          <span class="refresh-icon" aria-hidden="true">↻</span>
+        </button>
+      </header>
+      <span class="crosshair" id="crosshair" aria-hidden="true"></span>
+      <fieldset class="interaction plate" id="interaction" aria-label="Noticeboard controls" hidden>
+        <button type="button" id="turn-page" title="Shift+E for the previous page"><kbd>E</kbd> Next page</button>
+        <button type="button" id="reply"><kbd>R</kbd> Reply</button>
+        <a id="thread" href="/" target="_blank" rel="noopener"><kbd>T</kbd> Thread</a>
+      </fieldset>
+      <p class="visually-hidden" id="notice-description" aria-live="polite"></p>
+      <section class="welcome" id="welcome" aria-label="Enter the world">
+        <p class="eyebrow"><span></span> THE COAST</p>
+        <h1>Harbor<br /><em>Overworld</em></h1>
+        <p class="welcome-copy" id="welcome-copy">Follow the lights to read live Harbor posts.</p>
+        <div class="welcome-actions">
+          <button type="button" class="primary" id="enter-world">Enter world</button>
+          <button type="button" class="connect-link plate" id="connect-identity">Connect Harbor identity</button>
+        </div>
+        <p class="welcome-notice"><a href="/licenses.txt" target="_blank" rel="noopener">Unofficial Harbor client · Licenses</a></p>
+      </section>
+      <p class="toast plate" id="toast" role="status" hidden></p>
+      <footer class="hud-bottom">
+        <fieldset class="controls plate" aria-label="Game controls">
+          <div class="control-row"><span class="key-group"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>Move</span></div>
+          <div class="control-row"><span class="key-group"><span class="mouse-key" aria-hidden="true">◫</span></span><span>Look</span></div>
+          <div class="control-row"><span class="key-group"><kbd>E</kbd></span><span>Turn page</span></div>
+          <button type="button" class="control-row" id="open-chat"><span class="key-group"><kbd>Enter</kbd></span><span>Chat</span></button>
+        </fieldset>
+        <div class="map plate">
+          <div class="map-heading"><span>COAST MAP</span><span>N</span></div>
+          <canvas id="minimap" width="156" height="120" aria-label="Map showing your position and Harbor post locations"></canvas>
+          <div class="map-footer"><span id="coordinates">0 / 0</span><span><i></i> POST</span></div>
+        </div>
+      </footer>
+      <dialog class="panel chat-panel" id="chat-panel" aria-labelledby="chat-heading">
+        <button type="button" class="close" data-close aria-label="Close chat">×</button>
+        <p class="eyebrow"><span></span> HARBOR CHAT</p>
+        <h2 id="chat-heading">Write a post</h2>
+        <p class="metadata" id="chat-context">Publishes to Harbor as a public post.</p>
+        <form id="chat-form">
+          <label class="visually-hidden" for="draft">Post text</label>
+          <textarea id="draft" rows="4" placeholder="What’s on your mind?"></textarea>
+          <div class="panel-actions"><button type="submit" class="primary" id="send"><span id="send-label">Publish</span> <span aria-hidden="true">↵</span></button><span class="metadata">Shift+Enter for a new line</span></div>
+        </form>
+        <form id="identity-form" hidden>
+          <label for="identity-name">Display name</label>
+          <input id="identity-name" maxlength="50" placeholder="Your name on Harbor" required />
+          <div class="panel-actions"><button type="submit" class="primary" id="create-identity">Create identity</button><button type="button" class="text-link" id="existing-identity">Use an existing identity</button></div>
+        </form>
+        <p class="message" id="chat-status" role="status" hidden></p>
+      </dialog>
+      <dialog class="panel chat-panel" id="connect-panel" aria-labelledby="connect-heading">
+        <button type="button" class="close" data-close aria-label="Close identity setup">×</button>
+        <h2 id="connect-heading">Connect Harbor identity</h2>
+        <p class="metadata">Open device pairing in your Harbor app and paste its link or code here. Approve the browser there.</p>
+        <form id="pair-form">
+          <label for="pair-code">Pairing link or code</label>
+          <input id="pair-code" autocomplete="off" spellcheck="false" required />
+          <button type="submit" class="primary">Start pairing</button>
+        </form>
+        <details>
+          <summary>Recover from a backup file</summary>
+          <form id="backup-form">
+            <label for="backup-file">Harbor backup file</label>
+            <input id="backup-file" type="file" accept=".txt,text/plain" required />
+            <button type="submit" class="primary">Recover identity</button>
+          </form>
+        </details>
+        <p class="message" id="connect-status" role="status" hidden></p>
+      </dialog>
+    </main>
+    <script type="module" src="/src/world/main.ts"></script>
+  </body>
+</html>
