@@ -1,6 +1,6 @@
 # Harbor Overworld
 
-This fork adds Harbor Overworld, a browser game with live Harbor posts on in-world noticeboards. See the [Overworld deployment guide](apps/harbor-overworld/README.md) for the ready-to-serve release and HTTPS setup.
+This fork adds Harbor Overworld, a browser game with live Harbor posts on in-world noticeboards. See the [Overworld README](apps/harbor-overworld/README.md) to play locally or host the ready-to-serve release.
 
 <p align="center">
 <img alt="harborlogo" src="https://gitlab.futo.org/harbor/harbor/-/raw/develop/apps/harbor/src/common/assets/images/harbor-logo-256.png?ref_type=heads" width="50">

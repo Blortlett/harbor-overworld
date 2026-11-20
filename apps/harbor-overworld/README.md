@@ -4,14 +4,30 @@ Overworld is a desktop browser game. Live Harbor posts appear on wooden
 noticeboards. Walk with WASD, look with the mouse, turn pages with E, reply
 with R, and open chat with Enter.
 
+## Run locally
+
+Download the [release archive](https://github.com/SomewhatJustin/harbor-overworld/releases/latest/download/harbor-overworld.tar.gz)
+into your current directory. Extract it and start a loopback-only server with
+Python 3.
+
+```sh
+mkdir -p harbor-overworld-local
+tar -xzf harbor-overworld.tar.gz -C harbor-overworld-local
+python3 -m http.server 4173 --bind 127.0.0.1 --directory harbor-overworld-local
+```
+
+Open [http://127.0.0.1:4173/](http://127.0.0.1:4173/) in a desktop browser.
+Live posts and identity pairing still use the Harbor production network.
+Press Ctrl+C in the terminal to stop the server.
+
 ## Deploy the release on your hardware
 
-1. Download [harbor-overworld.tar.gz](https://github.com/SomewhatJustin/harbor-overworld/releases/download/overworld-v0.1.0/harbor-overworld.tar.gz).
+1. Download [harbor-overworld.tar.gz](https://github.com/SomewhatJustin/harbor-overworld/releases/latest/download/harbor-overworld.tar.gz).
    Extract it into a dedicated web root. The archive has `index.html`,
    `assets/`, and `licenses.txt` at its root.
 
    ```sh
-   curl -fL https://github.com/SomewhatJustin/harbor-overworld/releases/download/overworld-v0.1.0/harbor-overworld.tar.gz -o /tmp/harbor-overworld.tar.gz
+   curl -fL https://github.com/SomewhatJustin/harbor-overworld/releases/latest/download/harbor-overworld.tar.gz -o /tmp/harbor-overworld.tar.gz
    mkdir -p /srv/harbor-overworld
    tar -xzf /tmp/harbor-overworld.tar.gz -C /srv/harbor-overworld
    ```
