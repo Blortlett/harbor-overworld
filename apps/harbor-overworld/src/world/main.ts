@@ -20,6 +20,7 @@ import { bindIdentityDialog } from './connect';
 import { createControls, POINTER_DEGREES } from './controls';
 import { createCrown } from './crown';
 import { createGunAudio } from './gun-audio';
+import { createLandShark, type SharkPose } from './land-shark';
 import { bindMobileControls } from './mobile';
 import { createPlayerMovement, EYE_HEIGHT, spawnView } from './movement';
 import { PostNotice } from './notice';
@@ -37,6 +38,7 @@ import {
   type PlacementUpdate,
   placementChallenge,
   type PostLocation,
+  type Respawn,
   plotDay,
   postExpired,
   SHOT_INTERVAL,
@@ -134,6 +136,7 @@ const welcomeError = element('welcome-error');
 const enterButton = element<HTMLButtonElement>('enter-world');
 let sharedCrown: LocalCrown | undefined;
 let soloCrown: ReturnType<typeof createCrown> | undefined;
+let soloShark: ReturnType<typeof createLandShark> | undefined;
 let kingMode = false;
 let kingScale: KingScale = DEFAULT_KING_SCALE;
 let nextShot = 0;
@@ -176,6 +179,7 @@ const presence = createPresence(
     roomStatus.hidden = false;
     roomStatus.textContent = label;
     soloCrown = solo ? createCrown() : undefined;
+    soloShark = solo ? createLandShark() : undefined;
   },
   updatePlots,
   updatePlacements,
@@ -183,13 +187,19 @@ const presence = createPresence(
     sharedCrown = crown;
   },
   showGunshot,
-  (slot) => {
-    boat.reset();
-    plane.reset();
-    player.reset(spawnView(slot));
-    announce('You respawned at the harbor.');
-  },
+  respawnPlayer,
 );
+
+function respawnPlayer(slot: number, cause?: Respawn['cause']) {
+  boat.reset();
+  plane.reset();
+  player.reset(spawnView(slot));
+  announce(
+    cause === 'shark'
+      ? 'The land shark got you. You respawned at the harbor.'
+      : 'You respawned at the harbor.',
+  );
+}
 let renderer: ReturnType<typeof createRenderer> | undefined;
 let entered = false;
 let dragging = false;
@@ -222,6 +232,7 @@ const controls = createControls({
       room: roomStatus.textContent,
       king: kingMode ? { size: kingScale, time: kingStatus.textContent } : null,
       crown: crown && 'location' in crown ? crown.location : null,
+      shark: soloShark?.pose ?? presence.shark(performance.now()),
       boat: { available: boat.available, aboard: boat.aboard, ...boat.pose },
       plane: {
         available: plane.available,
@@ -1456,7 +1467,7 @@ const ticks = Array.from({ length: 24 }, (_, index) => {
   return mark;
 });
 
-function drawHud(avatars: readonly Avatar[] = []) {
+function drawHud(avatars: readonly Avatar[] = [], shark?: SharkPose) {
   const current = `${Math.floor(view.x)} / ${Math.floor(view.z)}`;
   if (coordinates.textContent !== current) coordinates.textContent = current;
   const bearing = ((((view.yaw * 180) / Math.PI) % 360) + 360) % 360;
@@ -1517,6 +1528,14 @@ function drawHud(avatars: readonly Avatar[] = []) {
       3,
       3,
     );
+  }
+  if (shark) {
+    const x = Math.round((shark.x - mapX) * mapScale);
+    const z = Math.round((shark.z - mapZ) * mapScale);
+    mapContext.fillStyle = '#321d19';
+    mapContext.fillRect(x - 2, z - 2, 5, 5);
+    mapContext.fillStyle = '#ed855d';
+    mapContext.fillRect(x - 1, z - 1, 3, 3);
   }
   mapContext.save();
   mapContext.translate(
@@ -1582,6 +1601,14 @@ function start() {
     ) {
       player.step(time, dt, movementInput, collisions);
     }
+    if (soloShark) {
+      const walkers =
+        boat.aboard || plane.aboard
+          ? []
+          : [{ id: 1, x: view.x, y: view.y - EYE_HEIGHT, z: view.z }];
+      if (soloShark.step(dt, walkers).length) respawnPlayer(0, 'shark');
+    }
+    const shark = soloShark?.pose ?? presence.shark(time);
     const extraEyeHeight = kingMode ? EYE_HEIGHT * (kingScale - 1) : 0;
     const camera = plane.aboard
       ? plane.camera()
@@ -1612,9 +1639,10 @@ function start() {
       entered && kingMode && !plane.aboard,
       boat.pose,
       plane.pose,
+      shark,
       shotEffects,
     );
-    drawHud(avatars);
+    drawHud(avatars, shark);
   }
   requestAnimationFrame(frame);
 }
@@ -1645,6 +1673,7 @@ void boot();
 
 window.addEventListener('pagehide', () => {
   soloCrown = undefined;
+  soloShark = undefined;
 });
 window.setInterval(retryPlacements, 1500);
 document.addEventListener('visibilitychange', () => {

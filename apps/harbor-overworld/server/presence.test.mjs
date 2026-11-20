@@ -316,6 +316,41 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     },
   );
 
+  await t.test(
+    'the room shares the shark and respawns a player it touches',
+    async (t) => {
+      const swimmer = connect(t);
+      const { id, slot } = await swimmer.until((m) => m.type === 'welcome');
+      const start = await swimmer.until(
+        (m) => m.type === 'players' && m.shark.x > 10,
+      );
+      assert.equal(start.shark.walking, false);
+      const from = b.received.length;
+      swimmer.send({ x: 19.5, y: WATER - 0.5, z: 26.5, yaw: 0 });
+      const hit = (m) => m.type === 'shark-hit' && m.respawn.id === id;
+      const [local, observed] = await Promise.all([
+        swimmer.until(hit),
+        b.until(hit, from),
+      ]);
+      assert.deepEqual(local, observed);
+      assert.deepEqual(observed.respawn, {
+        id,
+        slot,
+        spawnRevision: 1,
+        cause: 'shark',
+      });
+      const spawn = spawnView(slot);
+      await b.until(
+        (m) =>
+          m.players?.some(
+            (p) => p.id === id && p.x === spawn.x && p.z === spawn.z,
+          ),
+        from,
+      );
+      await swimmer.close();
+    },
+  );
+
   await t.test('replacing a tab session keeps one avatar', async (t) => {
     const session = randomBytes(16).toString('hex');
     const oldTab = connect(t, session);

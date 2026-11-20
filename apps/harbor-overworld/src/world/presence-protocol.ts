@@ -1,4 +1,5 @@
 import type { PlanePose } from './flight.ts';
+import type { SharkPose } from './land-shark.ts';
 import type { RoomVehicles, VehicleReport } from './vehicles.ts';
 import { MAX_PITCH } from './movement.ts';
 import { inWorld, WATER } from './terrain.ts';
@@ -40,7 +41,12 @@ export type Shoot = {
   pitch: number;
   kingScale: KingScale;
 };
-export type Respawn = { id: number; slot: number; spawnRevision: number };
+export type Respawn = {
+  id: number;
+  slot: number;
+  spawnRevision: number;
+  cause?: 'shark';
+};
 export type ShotPoint = readonly [number, number, number];
 export type ShotPath = {
   start: ShotPoint;
@@ -161,11 +167,13 @@ export type PresenceMessage =
       respawn?: Respawn;
     }
   | Gunshot
+  | { type: 'shark-hit'; respawn: Respawn }
   | {
       type: 'players';
       players: Player[];
       crown: RoomCrown;
       vehicles: RoomVehicles;
+      shark: SharkPose;
     };
 
 const resetClock = new Intl.DateTimeFormat('en-US', {

@@ -4,6 +4,7 @@ import type { HttpServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
 import { BUILD_COMMIT } from '../src/world/build.ts';
 import { createCrown } from '../src/world/crown.ts';
+import { createLandShark } from '../src/world/land-shark.ts';
 import { EYE_HEIGHT, spawnView } from '../src/world/movement.ts';
 import {
   displayName,
@@ -20,6 +21,7 @@ import {
   readChat,
   readKingScale,
   readVehicleReport,
+  type Respawn,
   ROOM_CAPACITY,
   SHOT_INTERVAL,
   type Shoot,
@@ -61,7 +63,7 @@ type Client = {
   nextPlacement: number;
   nextShot: number;
   spawnRevision: number;
-  respawnPending?: true;
+  respawnPending?: Respawn;
 };
 
 function sameHost(request: IncomingMessage) {
@@ -102,6 +104,7 @@ export function attachPresence(
 
   let detachedKing: { session: string; id: number; name?: string } | undefined;
   let nextId = 1;
+  const shark = createLandShark();
   const crown = createCrown(practice ? PRACTICE_CROWN_SITES : undefined);
   let shotObstacles: readonly Obstacle[] | undefined;
   let practiceTargetIndex = 0;
@@ -180,23 +183,24 @@ export function attachPresence(
       broadcast(shot);
       return;
     }
-    const { x, y, z, yaw } = spawnView(victim.slot);
-    victim.pose = { ...victim.pose, x, y: y - EYE_HEIGHT, z, yaw };
-    releaseVehicles(victim.id);
-    victim.spawnRevision++;
-    victim.respawnPending = true;
     broadcast({
       ...shot,
-      hit: {
-        id: victim.id,
-        line,
-        respawn: {
-          id: victim.id,
-          slot: victim.slot,
-          spawnRevision: victim.spawnRevision,
-        },
-      },
+      hit: { id: victim.id, line, respawn: respawn(victim, victim.pose) },
     });
+  }
+
+  function respawn(client: Client, pose: NamedPose, cause?: Respawn['cause']) {
+    const { x, y, z, yaw } = spawnView(client.slot);
+    client.pose = { ...pose, x, y: y - EYE_HEIGHT, z, yaw };
+    releaseVehicles(client.id);
+    const respawn = {
+      id: client.id,
+      slot: client.slot,
+      spawnRevision: ++client.spawnRevision,
+      cause,
+    };
+    client.respawnPending = respawn;
+    return respawn;
   }
 
   function upgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
@@ -326,13 +330,7 @@ export function attachPresence(
         commit: BUILD_COMMIT || undefined,
         id: client.id,
         slot: client.slot,
-        respawn: client.respawnPending
-          ? {
-              id: client.id,
-              slot: client.slot,
-              spawnRevision: client.spawnRevision,
-            }
-          : undefined,
+        respawn: client.respawnPending,
       };
       ws.send(JSON.stringify(welcome));
       const { day, posts } = plots.placements();
@@ -352,8 +350,11 @@ export function attachPresence(
   }
 
   http.on('upgrade', upgrade);
+  let lastTick = performance.now();
   const timer = setInterval(() => {
     const now = performance.now();
+    const seconds = Math.min(0.2, (now - lastTick) / 1000);
+    lastTick = now;
     for (const [session, client] of clients) {
       const { ws } = client;
       if (
@@ -368,6 +369,18 @@ export function attachPresence(
     }
 
     if (!clients.size) return;
+    const potentialVictims = playersWithPoses().filter(
+      ({ id }) => !VEHICLE_KINDS.some((kind) => vehicles[kind].driver === id),
+    );
+    const victims = shark.step(seconds, potentialVictims);
+    for (const client of clients.values()) {
+      if (client.pose && victims.includes(client.id)) {
+        broadcast({
+          type: 'shark-hit',
+          respawn: respawn(client, client.pose, 'shark'),
+        });
+      }
+    }
     const players = playersWithPoses();
     crown.update(now, players);
     const state = crown.state;
@@ -389,6 +402,7 @@ export function attachPresence(
       type: 'players',
       players,
       vehicles,
+      shark: shark.pose,
       crown:
         'location' in state
           ? state.location

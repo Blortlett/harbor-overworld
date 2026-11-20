@@ -17,6 +17,7 @@ export type View = {
   pitch: number;
 };
 export const EYE_HEIGHT = 1.64;
+export const WALK_SPEED = 4.7;
 export const MAX_PITCH = 1.31;
 const GRAVITY = 33;
 const JUMP_SPEED = 8.2;
@@ -217,7 +218,8 @@ function walk(
   }
 
   if (forward || sideways) {
-    const speed = (4.7 * dt) / Math.max(1, Math.hypot(forward, sideways));
+    const speed =
+      (WALK_SPEED * dt) / Math.max(1, Math.hypot(forward, sideways));
     const dx =
       (Math.sin(view.yaw) * forward + Math.cos(view.yaw) * sideways) * speed;
     const dz =

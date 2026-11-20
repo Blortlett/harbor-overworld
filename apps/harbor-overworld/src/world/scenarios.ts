@@ -67,6 +67,13 @@ export const scenarios = {
     yaw: Math.PI,
     segments: [{ frames: 90, forward: 1 }],
   },
+  'land-shark': {
+    label: 'Watch the land shark near the beach',
+    x: 3.5,
+    z: 29.5,
+    yaw: Math.PI / 2,
+    segments: [],
+  },
   'open-water': {
     label: 'Explore far offshore',
     x: 300,

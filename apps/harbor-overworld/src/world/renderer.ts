@@ -7,6 +7,7 @@ import {
   nameplate,
 } from './avatar';
 import { boatMesh, type BoatPose } from './boat';
+import { landSharkMesh, type SharkPose } from './land-shark';
 import type { PlanePose } from './flight';
 import type { View } from './movement';
 import type { Avatar } from './presence';
@@ -293,6 +294,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const crown = uploadMesh(crownMesh());
   const crownPickup = uploadMesh(crownMesh(0));
   const harborBoat = uploadMesh(boatMesh());
+  const landShark = uploadMesh(landSharkMesh());
   const harborSeaplane = uploadMesh(seaplaneMesh());
   const heldGun = uploadMesh(gunMesh());
   const firstPersonGun = uploadMesh(gunMesh(true));
@@ -452,6 +454,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       showHeldGun: boolean,
       boat: BoatPose,
       plane: PlanePose,
+      shark: SharkPose | undefined,
       shots: readonly ShotEffect[],
     ) {
       const gl = context;
@@ -540,6 +543,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       gl.uniform3f(avatarOrigin, boat.x, WATER, boat.z);
       gl.uniform2f(avatarRotation, Math.cos(boat.yaw), Math.sin(boat.yaw));
       mesh(harborBoat.buffer, harborBoat.count, avatarAttributes);
+      if (shark) {
+        gl.uniform3f(avatarOrigin, shark.x, shark.y, shark.z);
+        gl.uniform2f(avatarRotation, Math.cos(shark.yaw), Math.sin(shark.yaw));
+        gl.uniform1f(
+          avatarStep,
+          shark.walking ? Math.sin(time * 17) * 0.27 : 0,
+        );
+        mesh(landShark.buffer, landShark.count, avatarAttributes);
+      }
       if (crownLocation) {
         const { x, z } = crownLocation;
         gl.uniform3f(avatarOrigin, x, pickupY, z);

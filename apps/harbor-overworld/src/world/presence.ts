@@ -15,6 +15,7 @@ import {
   type Placement,
   type PlacementUpdate,
   type Pose,
+  type Respawn,
   type ChatPost,
   readChat,
   readKingScale,
@@ -24,6 +25,7 @@ import {
   type ShotPath,
 } from './presence-protocol';
 import type { PlanePose } from './flight';
+import type { SharkPose } from './land-shark';
 import {
   VEHICLE_KINDS,
   type Vehicle,
@@ -134,11 +136,12 @@ export function createPresence(
   onPlacements: (update: PlacementUpdate) => void,
   onCrown: (crown: LocalCrown | undefined) => void,
   onGunshot: (path: ShotPath, ownShot: boolean, line?: number) => void,
-  onRespawn: (slot: number) => void,
+  onRespawn: (slot: number, cause?: Respawn['cause']) => void,
 ) {
   const session = tabSession();
   const tracks = new Map<number, Track>();
   const vehicleTracks = new Map<VehicleKind, VehicleTrack>();
+  let sharkTrack: { from: Pose; to: SharkPose; receivedAt: number } | undefined;
   let socket: WebSocket | undefined;
   let sendTimer = 0;
   let reconnectTimer = 0;
@@ -192,7 +195,10 @@ export function createPresence(
     )
       return false;
     spawnRevision = value.spawnRevision;
-    onRespawn(value.slot);
+    onRespawn(
+      value.slot,
+      'cause' in value && value.cause === 'shark' ? 'shark' : undefined,
+    );
     return true;
   }
 
@@ -233,6 +239,23 @@ export function createPresence(
           () => sendPose(connection),
           PRESENCE_INTERVAL,
         );
+        return;
+      }
+
+      if (
+        id !== undefined &&
+        message.type === 'shark-hit' &&
+        'respawn' in message
+      ) {
+        const update = message.respawn;
+        if (
+          update &&
+          typeof update === 'object' &&
+          'id' in update &&
+          isPlayerId(update.id)
+        )
+          tracks.delete(update.id);
+        if (respawn(update)) sendPose(connection);
         return;
       }
 
@@ -311,6 +334,19 @@ export function createPresence(
       )
         return;
       const now = performance.now();
+      if (
+        'shark' in message &&
+        isPose(message.shark) &&
+        'walking' in message.shark &&
+        typeof message.shark.walking === 'boolean'
+      ) {
+        const to = { ...message.shark, walking: message.shark.walking };
+        sharkTrack = {
+          from: sharkTrack ? interpolate(sharkTrack, now) : to,
+          to,
+          receivedAt: now,
+        };
+      }
       if (
         'vehicles' in message &&
         message.vehicles &&
@@ -442,6 +478,7 @@ export function createPresence(
     clearTimeout(reconnectTimer);
     tracks.clear();
     vehicleTracks.clear();
+    sharkTrack = undefined;
   }
 
   window.addEventListener('pagehide', () => {
@@ -471,6 +508,13 @@ export function createPresence(
       if (started) return;
       started = true;
       open();
+    },
+    shark(now: number): SharkPose | undefined {
+      if (sharkTrack)
+        return {
+          ...interpolate(sharkTrack, now),
+          walking: sharkTrack.to.walking,
+        };
     },
     vehicle(kind: VehicleKind, now: number): Vehicle | undefined {
       const track = vehicleTracks.get(kind);

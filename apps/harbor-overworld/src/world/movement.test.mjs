@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fly, parkedPlane } from './flight.ts';
-import { createPlayerMovement, EYE_HEIGHT } from './movement.ts';
+import { createLandShark, LAND_SHARK_SPEED } from './land-shark.ts';
+import { createPlayerMovement, EYE_HEIGHT, WALK_SPEED } from './movement.ts';
 import { replayScenario, scenarios, scenarioView } from './scenarios.ts';
 import {
   ground,
@@ -185,4 +186,23 @@ test('open water surrounds the island and supports movement far from shore', () 
     assert.ok(!('crash' in plane));
   }
   assert.equal(plane.pose.x, MAX_X - 4);
+});
+
+test('the land shark walks to sea, chases a swimmer, and kills on contact', () => {
+  const shark = createLandShark();
+  const start = shark.pose;
+  assert.equal(LAND_SHARK_SPEED, (WALK_SPEED + WALK_SPEED * 2) / 2);
+  shark.step(0.1, []);
+  assert.equal(shark.pose.walking, true);
+  assert.ok(Math.abs(shark.pose.x - start.x - LAND_SHARK_SPEED * 0.1) < 1e-9);
+
+  const swimmer = { id: 1, x: 24.5, y: WATER - 0.5, z: 25.5 };
+  const bystander = { id: 2, x: -6.5, y: ground(-6.5, 29.5), z: 29.5 };
+  const driver = { id: 3, x: 13, y: WATER + 0.29, z: 25.5 };
+  let bitten = [];
+  for (let frame = 0; frame < 80 && !bitten.length; frame++)
+    bitten = shark.step(0.1, [swimmer, bystander, driver]);
+  assert.equal(shark.pose.walking, false);
+  assert.equal(shark.pose.z, swimmer.z);
+  assert.deepEqual(bitten, [swimmer.id]);
 });

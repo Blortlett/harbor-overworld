@@ -33,6 +33,9 @@ steering, and hold **Climb** or **Descend** for pitch.
 Hold **Shift** or the touch **Sprint** button while moving. Players sprint at
 twice walking speed, and the King sprints at eight times walking speed.
 
+The land shark walks out to sea and chases swimmers at 1.5× walking speed.
+Its orange marker shows on the map. Contact sends you back to harbor spawn.
+
 Follow the gold beacon and walk into the crown to become King for one
 minute. The room shows who is King and how much time remains. The crown
 appears at a random spot along an island trail and respawns when the minute
