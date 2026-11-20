@@ -164,6 +164,16 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   );
 
   await t.test(
+    'loads noticeboard posts beyond an Overworld-only feed page',
+    async () => {
+      const { papers } = await a.until(
+        (message) => message.type === 'plots' && message.papers.length > 0,
+      );
+      assert.deepEqual(papers, [regularPost.paper]);
+    },
+  );
+
+  await t.test(
     'relays movement without trusting a client-supplied crown',
     async () => {
       assert.notEqual(first.id, second.id);

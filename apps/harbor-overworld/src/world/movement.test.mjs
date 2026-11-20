@@ -53,3 +53,31 @@ test('walk into the sea and back onto the same beach', () => {
   assert.ok(view.x <= start + 0.01);
   assert.ok(ground(view.x, view.z) > WATER);
 });
+
+test('a regular player can walk out of a noticeboard that appeared around them', () => {
+  const [x, z] = STATIONS[0];
+  const view = viewAt(x, z);
+  for (let i = 0; i < 4; i++) walk(view, forward, dt, obstacles, 1);
+  assert.ok(view.z <= z - 0.42, 'walking away should escape the new board');
+});
+
+test('a regular player can retreat when their footprint overlaps a steep ledge', () => {
+  const view = viewAt(-73.04, -96.5);
+  const y = ground(view.x, view.z);
+  assert.equal(ground(view.x + 0.18, view.z), y + 2);
+  for (let i = 0; i < 4; i++) walk(view, west, 1 / 60, obstacles, 0);
+  assert.ok(view.x < -73.18, 'the footprint should be able to leave the ledge');
+});
+
+test('a regular player can move away from a tree while its trunk stays solid', () => {
+  const trunk = obstacles.find(
+    (obstacle) =>
+      obstacle.x === -5.5 && obstacle.z === 0.5 && obstacle.halfWidth === 0.21,
+  );
+  assert.ok(trunk);
+  const view = viewAt(trunk.x, trunk.z);
+  for (let i = 0; i < 4; i++) walk(view, west, dt, obstacles, 0);
+  assert.ok(view.x < trunk.x - trunk.halfWidth - 0.17);
+  for (let i = 0; i < 8; i++) walk(view, east, dt, obstacles, 0);
+  assert.ok(view.x <= trunk.x - trunk.halfWidth - 0.17);
+});

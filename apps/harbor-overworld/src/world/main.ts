@@ -212,12 +212,17 @@ function decodePaper(paper: string) {
 
 function updatePlots({ day, papers }: { day: string; papers: string[] }) {
   if (day !== plotDay(Date.now())) return;
+  const posts = papers.slice(0, STATIONS.length).flatMap((paper) => {
+    const post = decodePaper(paper);
+    return post ? [post] : [];
+  });
+  if (!posts.length) return;
   plotsDay = day;
-  setNotices(
-    papers.slice(0, STATIONS.length).flatMap((paper) => {
-      const post = decodePaper(paper);
-      return post ? [post] : [];
-    }),
+  setNotices(posts);
+  markNetwork(
+    'live',
+    'PRODUCTION',
+    `${posts.length} live ${posts.length === 1 ? 'post' : 'posts'}`,
   );
 }
 
@@ -504,24 +509,28 @@ async function loadPosts() {
   refresh.disabled = true;
   markNetwork('loading', 'CONNECTING', 'Harbor feed');
   try {
-    client = await getClient();
-    updateAvatarName(client);
-    const page = await loadExplorePage(client, 'latest', undefined, {
-      servers: HARBOR_PRODUCTION_SERVERS,
-      includeLocal: false,
-    });
-    const posts = [
-      ...new Map(
-        page.items
-          .filter((post) => !isOverworldPost(post))
-          .map((post) => [post.id, post]),
-      ).values(),
-    ].slice(0, STATIONS.length);
-    if (!plotsDay) setNotices(posts);
+    const activeClient = await getClient();
+    client = activeClient;
+    updateAvatarName(activeClient);
+    const posts = new Map<string, PostData>();
+    let cursor: string | undefined;
+    for (let i = 0; !plotsDay && i < 5 && posts.size < STATIONS.length; i++) {
+      const page = await loadExplorePage(activeClient, 'latest', cursor, {
+        servers: HARBOR_PRODUCTION_SERVERS,
+        includeLocal: false,
+      });
+      for (const post of page.items) {
+        if (!isOverworldPost(post)) posts.set(post.id, post);
+      }
+      if (!page.hasMore || !page.cursor || page.cursor === cursor) break;
+      cursor = page.cursor;
+    }
+    if (!plotsDay) setNotices([...posts.values()].slice(0, STATIONS.length));
+    const count = notices.length;
     markNetwork(
       'live',
       'PRODUCTION',
-      `${posts.length} live ${posts.length === 1 ? 'post' : 'posts'}`,
+      `${count} live ${count === 1 ? 'post' : 'posts'}`,
     );
   } catch (error) {
     console.error('Could not load the Harbor feed:', error);

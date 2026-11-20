@@ -11,6 +11,7 @@ import {
   SignedEvent,
 } from '../../../packages/js-core/src/proto/polycentric/v2/events.ts';
 import {
+  GetExploreFeedRequest,
   GetFeedResponse,
   GetPostRequest,
   GetPostResponse,
@@ -120,14 +121,20 @@ export function mockHarbor(
     assert.ok(init?.body instanceof Uint8Array);
     const payload = init.body.subarray(5);
     switch (url.pathname.split('/').pop()) {
-      case 'GetExploreFeed':
+      case 'GetExploreFeed': {
+        const next =
+          GetExploreFeedRequest.fromBinary(payload).pageParams?.forwardToken;
         return grpcResponse(
           GetFeedResponse.toBinary(
             GetFeedResponse.create({
-              eventBundles: [worldPost.bundle, regularPost.bundle],
+              eventBundles: [next ? regularPost.bundle : worldPost.bundle],
+              pageInfo: next
+                ? undefined
+                : { hasNextPage: true, endCursor: 'regular-posts' },
             }),
           ),
         );
+      }
       case 'GetPost': {
         const request = GetPostRequest.fromBinary(payload);
         const post = [worldPost, regularPost].find(

@@ -20,7 +20,7 @@ import {
   NOTICE,
   NOTICE_VERTICES,
   SPAWN,
-  stationBlocks,
+  stationPenetration,
   STATION_TOP,
   STATIONS,
   WATER,
@@ -675,6 +675,14 @@ const FOOTPRINT = [
   [0, -0.18],
 ] as const;
 
+function obstaclePenetration(obstacle: Obstacle, x: number, z: number) {
+  const dx = Math.abs(x - obstacle.x);
+  const dz = Math.abs(z - obstacle.z);
+  return 'radius' in obstacle
+    ? obstacle.radius + 0.17 - Math.hypot(dx, dz)
+    : Math.min(obstacle.halfWidth + 0.17 - dx, obstacle.halfDepth + 0.17 - dz);
+}
+
 export function walk(
   view: View,
   keys: ReadonlySet<string>,
@@ -687,20 +695,27 @@ export function walk(
 ) {
   function* obstaclesAt(x: number, z: number) {
     for (const obstacle of obstacles) {
-      const dx = Math.abs(x - obstacle.x);
-      const dz = Math.abs(z - obstacle.z);
-      if (
-        'radius' in obstacle
-          ? Math.hypot(dx, dz) < obstacle.radius + 0.17
-          : dx < obstacle.halfWidth + 0.17 && dz < obstacle.halfDepth + 0.17
-      )
-        yield obstacle;
+      const depth = obstaclePenetration(obstacle, x, z);
+      if (depth > 0) {
+        yield {
+          bottom: obstacle.bottom,
+          top: obstacle.top,
+          depth,
+          currentDepth: obstaclePenetration(obstacle, view.x, view.z),
+        };
+      }
     }
     for (let i = 0; i < stations; i++) {
       const station = STATIONS[i];
-      if (stationBlocks(station, x, z)) {
+      const depth = stationPenetration(station, x, z);
+      if (depth > 0) {
         const bottom = ground(station[0], station[1]);
-        yield { bottom, top: bottom + STATION_TOP };
+        yield {
+          bottom,
+          top: bottom + STATION_TOP,
+          depth,
+          currentDepth: stationPenetration(station, view.x, view.z),
+        };
       }
     }
   }
@@ -724,12 +739,21 @@ export function walk(
     if (next > terrainLimit) return false;
     if (airborneFeet === undefined && next > WATER && next < current - 2)
       return false;
-    if (FOOTPRINT.some(([ox, oz]) => ground(x + ox, z + oz) > terrainLimit))
-      return false;
-    const nextFeet = airborneFeet === undefined ? Math.max(feet, next) : feet;
-    for (const { bottom, top } of obstaclesAt(x, z)) {
-      if (nextFeet < top - 1e-6 && nextFeet + bodyHeight > bottom + 1e-6)
+    for (const [ox, oz] of FOOTPRINT) {
+      const edge = ground(x + ox, z + oz);
+      if (edge > terrainLimit && edge > ground(view.x + ox, view.z + oz))
         return false;
+    }
+    const nextFeet = airborneFeet === undefined ? Math.max(feet, next) : feet;
+    for (const { bottom, top, depth, currentDepth } of obstaclesAt(x, z)) {
+      const overlaps =
+        nextFeet < top - 1e-6 && nextFeet + bodyHeight > bottom + 1e-6;
+      const canEscape =
+        currentDepth >= depth - 1e-6 &&
+        currentDepth > 0 &&
+        feet < top - 1e-6 &&
+        feet + bodyHeight > bottom + 1e-6;
+      if (overlaps && !canEscape) return false;
     }
     return true;
   }

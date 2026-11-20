@@ -554,12 +554,12 @@ export function makeNoticeFaces(count: number) {
   return new Float32Array(vertices);
 }
 
-export function stationBlocks(
+export function stationPenetration(
   [x, z, sideways]: Station,
   px: number,
   pz: number,
 ) {
   const along = sideways ? pz - z : px - x;
   const across = sideways ? px - x : pz - z;
-  return Math.abs(along) < 1.53 && Math.abs(across) < 0.42;
+  return Math.min(1.53 - Math.abs(along), 0.42 - Math.abs(across));
 }

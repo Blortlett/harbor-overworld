@@ -20,9 +20,21 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      - name: Install build tools
+      - name: Restore compiled WASM and bindings
+        id: wasm
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            packages/rs-core-wasm/src/generated/wasm
+            packages/rs-core-wasm/dist/node
+          key: ${{ runner.os }}-${{ runner.arch }}-overworld-wasm-${{ hashFiles('**/Cargo.toml', 'Cargo.lock', '.cargo/**', 'packages/rs-core/**', 'packages/rs-common/**', 'packages/rs-core-wasm/**', 'protos/**', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'patches/**', '.nvmrc', '.github/workflows/build-overworld.yml') }}
+      - name: Install JavaScript dependencies
         run: |
           npm install --global "$(node -p 'require("./package.json").packageManager')"
+          pnpm install --filter harbor-overworld... --frozen-lockfile
+      - name: Install WASM build tools
+        if: steps.wasm.outputs.cache-hit != 'true'
+        run: |
           rustup toolchain install 1.100.0 --profile minimal --target wasm32-unknown-unknown
           rustup override set 1.100.0
           sudo apt-get update -qq
@@ -32,10 +44,11 @@ jobs:
           curl --fail --location --retry 3 -o "$archive.tar.gz" "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.130/$archive.tar.gz"
           echo "9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f  $archive.tar.gz" | sha256sum --check
           tar -xzf "$archive.tar.gz" -C "$HOME/.cargo/bin" --strip-components=1 "$archive/wasm-bindgen"
-      - name: Build WASM, SDK and site
+      - name: Build WASM and bindings
+        if: steps.wasm.outputs.cache-hit != 'true'
+        run: pnpm --filter @polycentric/rs-core-wasm build --profile wasm-release
+      - name: Build SDK and site
         run: |
-          pnpm install --filter harbor-overworld... --frozen-lockfile
-          pnpm --filter @polycentric/rs-core-wasm build --profile wasm-release
           pnpm --filter @polycentric/js-core generate
           pnpm --filter @polycentric/js-core build
           pnpm --filter @polycentric/js-browser build
@@ -53,8 +66,8 @@ jobs:
         with:
           node-version: "22"
           package-manager-cache: false
-      - name: Test standalone presence on Node 22
-        run: node --test apps/harbor-overworld/server/presence.test.mjs
+      - name: Test movement and standalone presence on Node 22
+        run: node --test apps/harbor-overworld/server/presence.test.mjs apps/harbor-overworld/src/world/movement.test.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: overworld-site

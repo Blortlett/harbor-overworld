@@ -30,6 +30,18 @@ const feeds = ['https://srv.harbor.social', 'https://srv.polycentric.io'].map(
     ),
 );
 const capacity = STATIONS.length;
+const FEED_PAGE_LIMIT = 5;
+
+function loadFeed(feed: FeedsServiceClient, forwardToken?: string) {
+  return feed.getExploreFeed(
+    {
+      pageParams: { limit: 50, forwardToken },
+      omitLabels: [],
+      sortBy: SortPostsBy.LATEST,
+    },
+    { timeout: 6000 },
+  ).response;
+}
 
 function readCandidates(bundles: EventBundle[], day: string, now: number) {
   const posts = [];
@@ -57,7 +69,7 @@ function readCandidates(bundles: EventBundle[], day: string, now: number) {
       // Ignore entries the client cannot decode.
     }
   }
-  return posts.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+  return posts;
 }
 
 export function createPlots(
@@ -171,30 +183,45 @@ export function createPlots(
     if (polling || plots.size >= capacity) return;
     polling = true;
     try {
-      const response = await Promise.any(
-        feeds.map(
-          (feed) =>
-            feed.getExploreFeed(
-              {
-                pageParams: { limit: 50 },
-                omitLabels: [],
-                sortBy: SortPostsBy.LATEST,
-              },
-              { timeout: 6000 },
-            ).response,
-        ),
+      const firstPage = await Promise.any(
+        feeds.map(async (feed) => ({ feed, page: await loadFeed(feed) })),
       );
-      if (day !== current || plotDay(Date.now()) !== current) return;
-      const before = plots.size;
-      for (const post of readCandidates(
-        response.eventBundles,
-        day,
-        Date.now(),
-      )) {
-        if (plots.size >= capacity) break;
-        if (post.reply || post.application === OVERWORLD_APPLICATION) continue;
-        if (!plots.has(post.id)) plots.set(post.id, post.paper);
+      const { feed } = firstPage;
+      let page = firstPage.page;
+      let cursor: string | undefined;
+      const candidates = new Map<
+        string,
+        ReturnType<typeof readCandidates>[number]
+      >();
+      for (let i = 0; i < FEED_PAGE_LIMIT; i++) {
+        const now = Date.now();
+        if (day !== current || plotDay(now) !== current) return;
+        for (const post of readCandidates(page.eventBundles, day, now)) {
+          if (post.reply || post.application === OVERWORLD_APPLICATION)
+            continue;
+          if (!plots.has(post.id)) candidates.set(post.id, post);
+        }
+        const next = page.pageInfo?.endCursor;
+        if (
+          plots.size + candidates.size >= capacity ||
+          i + 1 === FEED_PAGE_LIMIT ||
+          !page.pageInfo?.hasNextPage ||
+          !next ||
+          next === cursor
+        )
+          break;
+        cursor = next;
+        const following = await loadFeed(feed, cursor).catch(() => undefined);
+        if (!following) break;
+        page = following;
       }
+      if (plotDay(Date.now()) !== current) return;
+      const before = plots.size;
+      const ordered = [...candidates.values()].sort(
+        (a, b) => a.time - b.time || a.id.localeCompare(b.id),
+      );
+      for (const { id, paper } of ordered.slice(0, capacity - plots.size))
+        plots.set(id, paper);
       const first = !ready;
       ready = true;
       if (first || plots.size !== before) {
