@@ -14,6 +14,7 @@ import {
   type NamedPose,
   type PresenceMessage,
   readChat,
+  readKingScale,
   ROOM_CAPACITY,
 } from '../src/world/presence-protocol.ts';
 import { verifyKing } from './king.ts';
@@ -177,6 +178,10 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
           yaw,
           name: 'name' in message ? displayName(message.name) : undefined,
           chat: 'chat' in message ? readChat(message.chat) : undefined,
+          kingScale:
+            'kingScale' in message
+              ? readKingScale(message.kingScale)
+              : undefined,
         };
         client.updatedAt = now;
       });
@@ -220,6 +225,8 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
           id: client.id,
           ...client.pose,
           king: client === king ? (true as const) : undefined,
+          kingScale:
+            client === king ? readKingScale(client.pose.kingScale) : undefined,
         });
       }
     }

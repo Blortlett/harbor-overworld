@@ -3,20 +3,27 @@ import {
   coatIndex,
   COATS,
   crownMesh,
-  KING_AVATAR_SCALE,
+  gunMesh,
   nameplate,
 } from './avatar';
 import type { Avatar } from './presence';
+import { DEFAULT_KING_SCALE } from './presence-protocol';
 import {
   ground,
   makeNoticeFaces,
   makeStations,
   makeTerrain,
+  MAX_X,
+  MAX_Z,
+  MIN_X,
+  MIN_Z,
   NOTICE,
   NOTICE_VERTICES,
   SPAWN,
   stationBlocks,
+  STATION_TOP,
   STATIONS,
+  WATER,
   type Obstacle,
 } from './terrain';
 
@@ -223,6 +230,10 @@ function compile(gl: WebGLRenderingContext, vertex: string, fragment: string) {
   return program;
 }
 
+function avatarScaleFor(avatar: Avatar) {
+  return avatar.king ? (avatar.kingScale ?? DEFAULT_KING_SCALE) : 1;
+}
+
 export function createRenderer(canvas: HTMLCanvasElement) {
   const gl = canvas.getContext('webgl', { alpha: false, antialias: false });
   if (!gl) throw new Error('WebGL is unavailable in this browser.');
@@ -254,6 +265,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   }
   const avatarMeshes = COATS.map((_, index) => uploadMesh(avatarMesh(index)));
   const crown = uploadMesh(crownMesh());
+  const heldGun = uploadMesh(gunMesh());
+  const firstPersonGun = uploadMesh(gunMesh(true));
   const noticeTextures: WebGLTexture[] = [];
   let stationVertices = 0;
   gl.bindBuffer(gl.ARRAY_BUFFER, screen);
@@ -388,6 +401,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       time: number,
       avatars: readonly Avatar[],
       drops: readonly FallingPost[],
+      showHeldGun: boolean,
     ) {
       const gl = context;
       const height = Math.max(1, Math.min(canvas.clientHeight, 660));
@@ -441,11 +455,14 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       mesh(stations, stationVertices, worldAttributes);
       for (const attr of worldAttributes) gl.disableVertexAttribArray(attr);
 
-      const visible = avatars.filter(
-        ({ x, z, king }) =>
-          Math.hypot(x - view.x, z - view.z) >=
-          0.55 * (king ? KING_AVATAR_SCALE : 1),
-      );
+      const visible = avatars.filter((avatar) => {
+        const scale = avatarScaleFor(avatar);
+        return (
+          Math.hypot(avatar.x - view.x, avatar.z - view.z) >= 0.55 * scale ||
+          view.y < avatar.y ||
+          view.y > avatar.y + 1.75 * scale
+        );
+      });
       if (visible.length) {
         gl.useProgram(avatarProgram);
         camera(avatarUniforms);
@@ -454,7 +471,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         for (const avatar of visible) {
           const model = avatarMeshes[coatIndex(avatar.id)];
           gl.uniform3f(avatarOrigin, avatar.x, avatar.y, avatar.z);
-          gl.uniform1f(avatarScale, avatar.king ? KING_AVATAR_SCALE : 1);
+          gl.uniform1f(avatarScale, avatarScaleFor(avatar));
           gl.uniform2f(
             avatarRotation,
             Math.cos(avatar.yaw),
@@ -465,7 +482,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
             avatar.walking ? Math.sin(time * 14 + avatar.id) * 0.18 : 0,
           );
           mesh(model.buffer, model.count, avatarAttributes);
-          if (avatar.king) mesh(crown.buffer, crown.count, avatarAttributes);
+          if (avatar.king) {
+            mesh(crown.buffer, crown.count, avatarAttributes);
+            mesh(heldGun.buffer, heldGun.count, avatarAttributes);
+          }
         }
         for (const attr of avatarAttributes) gl.disableVertexAttribArray(attr);
       }
@@ -566,7 +586,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         }
 
         for (const avatar of nearby) {
-          const labelY = avatar.y + (avatar.king ? 3.64 : 1.63);
+          const labelY =
+            avatar.y + (avatar.king ? 1.82 * avatarScaleFor(avatar) : 1.63);
           const label = nameTexture(
             String(avatar.id),
             avatar.id,
@@ -620,6 +641,22 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         gl.disableVertexAttribArray(noticePoint);
         gl.disableVertexAttribArray(paperUv);
       }
+      if (showHeldGun) {
+        gl.clear(gl.DEPTH_BUFFER_BIT);
+        gl.useProgram(worldProgram);
+        gl.uniform3f(worldUniforms.eye, 0, 0, 0);
+        gl.uniform3f(worldUniforms.right, 1, 0, 0);
+        gl.uniform3f(worldUniforms.up, 0, 1, 0);
+        gl.uniform3f(worldUniforms.forward, 0, 0, -1);
+        gl.uniform2f(
+          worldUniforms.scale,
+          verticalScale / Math.max(aspect, 0.8),
+          verticalScale,
+        );
+        for (const attr of worldAttributes) gl.enableVertexAttribArray(attr);
+        mesh(firstPersonGun.buffer, firstPersonGun.count, worldAttributes);
+        for (const attr of worldAttributes) gl.disableVertexAttribArray(attr);
+      }
     },
   };
 }
@@ -631,6 +668,13 @@ export function spawnView(slot = 0): View {
   return { x, y: ground(x, z) + EYE_HEIGHT, z, yaw: 0.075, pitch: -0.075 };
 }
 
+const FOOTPRINT = [
+  [0.18, 0],
+  [-0.18, 0],
+  [0, 0.18],
+  [0, -0.18],
+] as const;
+
 export function walk(
   view: View,
   keys: ReadonlySet<string>,
@@ -638,7 +682,58 @@ export function walk(
   obstacles: readonly Obstacle[],
   stations: number,
   touch?: Readonly<{ forward: number; sideways: number }>,
+  airborneFeet?: number,
+  previousFeet = view.y - EYE_HEIGHT,
 ) {
+  function* obstaclesAt(x: number, z: number) {
+    for (const obstacle of obstacles) {
+      const dx = Math.abs(x - obstacle.x);
+      const dz = Math.abs(z - obstacle.z);
+      if (
+        'radius' in obstacle
+          ? Math.hypot(dx, dz) < obstacle.radius + 0.17
+          : dx < obstacle.halfWidth + 0.17 && dz < obstacle.halfDepth + 0.17
+      )
+        yield obstacle;
+    }
+    for (let i = 0; i < stations; i++) {
+      const station = STATIONS[i];
+      if (stationBlocks(station, x, z)) {
+        const bottom = ground(station[0], station[1]);
+        yield { bottom, top: bottom + STATION_TOP };
+      }
+    }
+  }
+
+  const bodyHeight = EYE_HEIGHT;
+  const previousHead = previousFeet + bodyHeight;
+  let feet = airborneFeet ?? previousFeet;
+  if (feet > previousFeet) {
+    for (const { bottom } of obstaclesAt(view.x, view.z)) {
+      if (bottom >= previousHead - 1e-6)
+        feet = Math.min(feet, Math.max(previousFeet, bottom - bodyHeight));
+    }
+  }
+
+  function clear(x: number, z: number) {
+    if (x < MIN_X || x >= MAX_X || z < MIN_Z || z >= MAX_Z) return false;
+    const current = ground(view.x, view.z);
+    const next = ground(x, z);
+    const terrainLimit =
+      airborneFeet === undefined ? Math.max(current, feet, WATER) + 1 : feet;
+    if (next > terrainLimit) return false;
+    if (airborneFeet === undefined && next > WATER && next < current - 2)
+      return false;
+    if (FOOTPRINT.some(([ox, oz]) => ground(x + ox, z + oz) > terrainLimit))
+      return false;
+    const nextFeet = airborneFeet === undefined ? Math.max(feet, next) : feet;
+    for (const { bottom, top } of obstaclesAt(x, z)) {
+      if (nextFeet < top - 1e-6 && nextFeet + bodyHeight > bottom + 1e-6)
+        return false;
+    }
+    return true;
+  }
+
   const forward =
     Number(keys.has('KeyW')) - Number(keys.has('KeyS')) + (touch?.forward ?? 0);
   const sideways =
@@ -651,34 +746,15 @@ export function walk(
       (Math.sin(view.yaw) * forward + Math.cos(view.yaw) * sideways) * speed;
     const dz =
       (-Math.cos(view.yaw) * forward + Math.sin(view.yaw) * sideways) * speed;
-    function clear(x: number, z: number) {
-      const current = ground(view.x, view.z);
-      const next = ground(x, z);
-      if (next < 2 || next > current + 1 || next < current - 2) return false;
-      for (const [ox, oz] of [
-        [0.18, 0],
-        [-0.18, 0],
-        [0, 0.18],
-        [0, -0.18],
-      ]) {
-        if (ground(x + ox, z + oz) > current + 1) return false;
-      }
-      if (
-        obstacles.some(
-          (obstacle) =>
-            Math.hypot(x - obstacle.x, z - obstacle.z) < obstacle.radius + 0.17,
-        )
-      )
-        return false;
-      return !STATIONS.slice(0, stations).some((station) =>
-        stationBlocks(station, x, z),
-      );
-    }
-    if (clear(view.x + dx, view.z)) view.x += dx;
-    if (clear(view.x, view.z + dz)) view.z += dz;
+    if (dx && clear(view.x + dx, view.z)) view.x += dx;
+    if (dz && clear(view.x, view.z + dz)) view.z += dz;
   }
-  const target = ground(view.x, view.z) + EYE_HEIGHT;
-  view.y += (target - view.y) * Math.min(1, dt * 11);
+  let floor = Math.max(WATER - 0.5, ground(view.x, view.z));
+  for (const { top } of obstaclesAt(view.x, view.z)) {
+    if (top <= Math.max(previousFeet, feet) + 1e-6)
+      floor = Math.max(floor, top);
+  }
+  return { floor, feet };
 }
 
 export function facingNotice(view: View, count: number) {

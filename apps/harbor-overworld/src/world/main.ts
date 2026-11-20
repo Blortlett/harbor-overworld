@@ -11,17 +11,21 @@ import { getClient, HARBOR_PRODUCTION_SERVERS } from '../client/client';
 import { createPost, MAX_POST_LENGTH } from '../data/compose';
 import { loadExplorePage } from '../data/feed';
 import { createIdentity, latestLocalProfile } from '../data/identity';
+import { findLike, setLike } from '../data/likes';
 import { decodePostBundle, eventKeyFromId, type PostData } from '../data/posts';
-import { coatIndex, COATS, KING_AVATAR_SCALE } from './avatar';
+import { coatIndex, COATS } from './avatar';
 import { bindIdentityDialog } from './connect';
 import { bindMobileControls } from './mobile';
 import { PostNotice } from './notice';
 import { type Avatar, createPresence } from './presence';
 import {
+  DEFAULT_KING_SCALE,
   displayName,
   isPlacedPost,
   isPlacement,
   KING_IDENTITY,
+  KING_SCALES,
+  type KingScale,
   kingChallenge,
   OVERWORLD_APPLICATION,
   type PlacedPost,
@@ -46,7 +50,14 @@ import {
   spawnView,
   walk,
 } from './renderer';
-import { ground, noise, SPAWN, STATIONS, trailDistance } from './terrain';
+import {
+  ground,
+  noise,
+  SPAWN,
+  STATIONS,
+  trailDistance,
+  WATER,
+} from './terrain';
 import './world.css';
 
 function element<T extends HTMLElement>(id: string) {
@@ -61,6 +72,7 @@ const welcome = element('welcome');
 const connectIdentity = element('connect-identity');
 const interaction = element('interaction');
 const pageButton = element<HTMLButtonElement>('turn-page');
+const likeButton = element<HTMLButtonElement>('like-post');
 const thread = element<HTMLAnchorElement>('thread');
 const noticeDescription = element('notice-description');
 const crosshair = element('crosshair');
@@ -90,26 +102,30 @@ const movement = [
 const view = spawnView();
 const roomStatus = element('room-status');
 const kingStatus = element('king-status');
+const kingSizeButton = element<HTMLButtonElement>('king-size');
 const welcomeIdentity = element<HTMLFormElement>('welcome-identity');
 const welcomeName = element<HTMLInputElement>('welcome-name');
 const welcomeError = element('welcome-error');
 const enterButton = element<HTMLButtonElement>('enter-world');
-let jump = 0;
+let floor = view.y - EYE_HEIGHT;
 const GRAVITY = 33;
 const JUMP_SPEED = 8.2;
 let airborne: { height: number; startedAt: number; speed: number } | undefined;
 let kingMode = false;
+let kingScale: KingScale = DEFAULT_KING_SCALE;
 let avatarName: string | undefined;
 const presence = createPresence(
   () => ({
     ...view,
-    y: view.y - EYE_HEIGHT + jump,
+    y: view.y - EYE_HEIGHT,
     name: avatarName,
+    kingScale: kingMode ? kingScale : undefined,
   }),
   (slot) => {
     if (Math.hypot(view.x - SPAWN.x, view.z - SPAWN.z) > 0.25) return;
     const { x, y, z } = spawnView(slot);
     Object.assign(view, { x, y, z });
+    floor = y - EYE_HEIGHT;
   },
   (label) => {
     roomStatus.hidden = false;
@@ -230,7 +246,7 @@ function showPlacement(
   }
   existing?.preview?.remove();
   const notice = new PostNotice(post, updateNotice, { card: true, author });
-  let y = ground(x, z);
+  let y = Math.max(WATER, ground(x, z));
   for (const { drop } of worldPosts.values()) {
     if (drop.id !== id && drop.x === x && drop.z === z)
       y = Math.max(y, drop.y + DROP_HEIGHT + 0.08);
@@ -439,6 +455,9 @@ function updateAvatarName(activeClient: PolycentricClient) {
     : 'Connect Harbor identity';
   kingMode = identity === KING_IDENTITY && !!activeClient.currentKeyPair;
   kingStatus.hidden = !kingMode;
+  updateLikeButton();
+  kingSizeButton.hidden = !kingMode;
+  if (!kingMode) setKingScale(DEFAULT_KING_SCALE);
   if (!kingMode) kingStatus.textContent = 'King Mode';
   void presence
     .proveKing()
@@ -576,12 +595,48 @@ function focusNotice(notice: PostNotice | undefined) {
   interaction.hidden = !notice;
   crosshair.classList.toggle('active', !!notice);
   noticeDescription.textContent = notice?.description ?? '';
+  updateLikeButton();
   if (!notice) return;
   pageButton.hidden = notice.pageCount < 2;
   const { identity, signedBy, sequence } = notice.post;
   const fingerprint = bytesToHex(signedBy.key).slice(0, 16);
   thread.href = `https://harbor.social/${encodeURIComponent(identity)}/post/${fingerprint}/${encodeURIComponent(sequence)}`;
   if (client) notice.loadAssets(client);
+}
+
+function updateLikeButton() {
+  const post = focusedNotice?.post;
+  likeButton.setAttribute(
+    'aria-pressed',
+    String(!!(post && client && findLike(client, post.id))),
+  );
+}
+
+async function toggleLike() {
+  const post = focusedNotice?.post;
+  if (!post || busy) return;
+  const activeClient = client;
+  if (!activeClient?.activeIdentityKey || !activeClient.currentKeyPair) {
+    openIdentity();
+    return;
+  }
+  busy = true;
+  likeButton.disabled = true;
+  try {
+    const existing = findLike(activeClient, post.id);
+    const { eventKey } = await setLike(activeClient, post.id, existing);
+    updateLikeButton();
+    const sent = await publish(activeClient, eventKey, false);
+    if (sent) announce(existing ? 'Like removed.' : 'Post liked.');
+    else announce('Reaction saved locally. Harbor sync is pending.');
+  } catch (error) {
+    console.error('Could not update the Harbor reaction:', error);
+    announce('Could not finish syncing your reaction.');
+  } finally {
+    busy = false;
+    likeButton.disabled = false;
+    updateLikeButton();
+  }
 }
 
 function turnPage(backwards = false) {
@@ -638,10 +693,9 @@ async function openChat(target?: PostData) {
 
 async function publish(
   activeClient: PolycentricClient,
-  post: PostData,
+  key: v2.EventKey,
   retry: boolean,
 ) {
-  const key = eventKeyFromId(post.id);
   const results = new Map<string, ServerPushResult>();
   const collect = (outcomes: ServerPushResult[]) => {
     for (const outcome of outcomes) {
@@ -662,7 +716,7 @@ async function publish(
     activeClient.events.offPushResults(collect);
     activeClient.servers = previousServers;
   }
-  const signer = bytesToHex(post.signedBy.key);
+  const signer = key.signedBy && bytesToHex(key.signedBy.key);
   return HARBOR_PRODUCTION_SERVERS.some((server) => {
     const result = results.get(server);
     return (
@@ -704,7 +758,7 @@ chatForm.addEventListener('submit', async (event) => {
       bytesToHex(pair.publicKey.key) !== bytesToHex(post.signedBy.key)
     )
       throw new Error('The publishing identity changed.');
-    if (!(await publish(activeClient, post, retry)))
+    if (!(await publish(activeClient, eventKeyFromId(post.id), retry)))
       throw new Error('No production server confirmed the post.');
     const publishedAt = Date.now();
     const proof = bytesToHex(
@@ -817,7 +871,12 @@ bindIdentityDialog(connectPanel, (connectedClient) => {
 connectIdentity.addEventListener('click', openIdentity);
 element('existing-identity').addEventListener('click', openIdentity);
 refresh.addEventListener('click', () => void loadPosts());
+kingSizeButton.addEventListener('click', (event) => {
+  cycleKingScale();
+  if (event.detail > 0) kingSizeButton.blur();
+});
 pageButton.addEventListener('click', () => turnPage());
+likeButton.addEventListener('click', () => void toggleLike());
 async function enterFromWelcome() {
   if (busy) return;
   const name = welcomeName.value.trim();
@@ -881,26 +940,34 @@ function handleLook(deltaX: number, deltaY: number) {
   view.pitch = Math.max(-1.31, Math.min(1.31, view.pitch - deltaY * 0.00245));
 }
 
+function setKingScale(scale: KingScale) {
+  kingScale = scale;
+  kingSizeButton.textContent = `Size ${scale}×`;
+}
+
+function cycleKingScale() {
+  if (kingMode)
+    setKingScale(
+      KING_SCALES[(KING_SCALES.indexOf(kingScale) + 1) % KING_SCALES.length],
+    );
+}
+
 function jumpHeight(time: number) {
-  if (!airborne) return 0;
+  if (!airborne) return floor;
   const { height, startedAt, speed } = airborne;
   const seconds = Math.max(0, (time - startedAt) / 1000);
-  return Math.max(
-    0,
-    Math.min(
-      80 - view.y,
-      height + speed * seconds - (GRAVITY * seconds ** 2) / 2,
-    ),
+  return Math.min(
+    80 - EYE_HEIGHT,
+    height + speed * seconds - (GRAVITY * seconds ** 2) / 2,
   );
 }
 
 function jumpOnce() {
   if (!entered || chatPanel.open || connectPanel.open) return;
+  if (!kingMode && airborne) return;
   const startedAt = performance.now();
-  const height = jumpHeight(startedAt);
-  if (!kingMode && (height > 0 || airborne?.startedAt === startedAt)) return;
   airborne = {
-    height,
+    height: Math.max(floor, jumpHeight(startedAt)),
     startedAt,
     speed: kingMode ? JUMP_SPEED * Math.SQRT2 : JUMP_SPEED,
   };
@@ -938,12 +1005,17 @@ window.addEventListener('keydown', (event) => {
     if (!event.repeat) void openChat();
     return;
   }
+  if (entered && kingMode && event.code === 'KeyK') {
+    event.preventDefault();
+    if (!event.repeat) cycleKingScale();
+    return;
+  }
   if (entered && event.code === 'Space') {
     event.preventDefault();
     if (!event.repeat) jumpOnce();
     return;
   }
-  if (focusedNotice && ['KeyE', 'KeyR', 'KeyT'].includes(event.code)) {
+  if (focusedNotice && ['KeyE', 'KeyR', 'KeyT', 'KeyL'].includes(event.code)) {
     event.preventDefault();
     if (event.repeat) return;
     if (event.code === 'KeyE') turnPage(event.shiftKey);
@@ -952,6 +1024,7 @@ window.addEventListener('keydown', (event) => {
       replyToNotice();
     }
     if (event.code === 'KeyT') thread.click();
+    if (event.code === 'KeyL') void toggleLike();
     return;
   }
   if (!renderer || !movement.includes(event.code)) return;
@@ -1079,6 +1152,8 @@ function start() {
     const dt = Math.min(0.05, (time - previous) / 1000);
     previous = time;
     const exploring = entered && !chatPanel.open && !connectPanel.open;
+    const jumpFeet = airborne ? jumpHeight(time) : undefined;
+    let feet = jumpFeet;
     if (exploring) {
       view.yaw +=
         (Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft'))) *
@@ -1092,13 +1167,27 @@ function start() {
             (Number(keys.has('ArrowUp')) - Number(keys.has('ArrowDown'))) * dt,
         ),
       );
-      walk(view, keys, dt, renderer.obstacles, notices.length, mobile.movement);
+      ({ floor, feet } = walk(
+        view,
+        keys,
+        dt,
+        renderer.obstacles,
+        notices.length,
+        mobile.movement,
+        jumpFeet,
+        airborne ? view.y - EYE_HEIGHT : floor,
+      ));
     }
-    jump = jumpHeight(time);
-    if (airborne && time > airborne.startedAt && jump === 0)
-      airborne = undefined;
-    const extraEyeHeight = kingMode ? EYE_HEIGHT * (KING_AVATAR_SCALE - 1) : 0;
-    const camera = { ...view, y: view.y + extraEyeHeight + jump };
+    if (airborne && feet !== undefined) {
+      view.y = Math.max(floor, feet) + EYE_HEIGHT;
+      if (time > airborne.startedAt && feet <= floor) airborne = undefined;
+      else if (jumpFeet !== undefined && feet < jumpFeet)
+        airborne = { height: feet, startedAt: time, speed: 0 };
+    } else {
+      view.y += (floor + EYE_HEIGHT - view.y) * Math.min(1, dt * 11);
+    }
+    const extraEyeHeight = kingMode ? EYE_HEIGHT * (kingScale - 1) : 0;
+    const camera = { ...view, y: view.y + extraEyeHeight };
     const seconds = time / 1000;
     const noticeIndex = exploring ? facingNotice(camera, notices.length) : -1;
     focusNotice(
@@ -1112,6 +1201,7 @@ function start() {
       seconds,
       avatars,
       [...worldPosts.values()].map(({ drop }) => drop),
+      entered && kingMode,
     );
     drawHud(avatars);
   }

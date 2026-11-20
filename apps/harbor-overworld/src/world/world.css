@@ -213,6 +213,13 @@ a {
   color: var(--soft);
   font-size: 13px;
 }
+#king-size {
+  min-height: 36px;
+  pointer-events: auto;
+}
+#king-size:is(:hover, :focus-visible) {
+  color: var(--gold);
+}
 .network strong {
   display: block;
   font-size: 12px;
@@ -553,6 +560,10 @@ kbd,
   text-decoration: none;
 }
 .interaction :is(button, a):hover {
+  background: #e2d6a31a;
+}
+#like-post[aria-pressed="true"] {
+  color: var(--gold);
   background: #e2d6a31a;
 }
 .interaction kbd {

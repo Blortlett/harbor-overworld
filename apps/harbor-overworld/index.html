@@ -31,6 +31,7 @@
           </div>
           <p class="room-status plate" id="room-status" role="status" hidden></p>
           <p class="room-status plate" id="king-status" role="status" hidden>King Mode</p>
+          <button type="button" class="room-status plate" id="king-size" title="Cycle King size (K)" aria-keyshortcuts="K" hidden>Size 2×</button>
           <p class="room-status plate" id="fullscreen-status" role="status" hidden></p>
         </div>
       </header>
@@ -39,6 +40,7 @@
       <fieldset class="interaction plate" id="interaction" aria-label="Noticeboard controls" hidden>
         <button type="button" id="turn-page" title="Shift+E for the previous page"><kbd>E</kbd> Next page</button>
         <button type="button" id="reply"><kbd>R</kbd> Reply</button>
+        <button type="button" id="like-post" aria-pressed="false" aria-keyshortcuts="L"><kbd>L</kbd> Like</button>
         <a id="thread" href="/" target="_blank" rel="noopener"><kbd>T</kbd> Thread</a>
       </fieldset>
       <p class="visually-hidden" id="notice-description" aria-live="polite"></p>

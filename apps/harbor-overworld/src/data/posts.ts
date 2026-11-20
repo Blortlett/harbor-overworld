@@ -44,7 +44,7 @@ export function eventKeyFromId(id: string): v2.EventKey {
 type ContentKind = Exclude<v2.Content['contentBody']['oneofKind'], undefined>;
 
 /** Decode a bundle as one content kind. Returns null for a different kind. */
-function decodeBundle(bundle: v2.EventBundle, kind: ContentKind) {
+export function decodeBundle(bundle: v2.EventBundle, kind: ContentKind) {
   if (!bundle.signedEvent || !bundle.serializedContent?.contentBytes) {
     return null;
   }

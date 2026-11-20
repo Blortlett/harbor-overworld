@@ -1,7 +1,5 @@
 import { type Color, Mesh } from './terrain';
 
-export const KING_AVATAR_SCALE = 2;
-
 export const COATS: readonly Color[] = [
   [0.21, 0.57, 0.62],
   [0.81, 0.38, 0.24],
@@ -50,6 +48,25 @@ export function avatarMesh(index: number) {
   mesh.box(-0.175, 0.68, 0.14, 0.35, 0.4, 0.145, pack);
   mesh.box(-0.175, 0.99, 0.14, 0.35, 0.08, 0.162, boots);
   mesh.box(-0.038, 0.865, 0.285, 0.076, 0.065, 0.009, trim);
+  return new Float32Array(mesh.vertices);
+}
+
+export function gunMesh(firstPerson = false) {
+  const mesh = new Mesh();
+  const [x, y, z] = firstPerson ? [0.23, -0.3, -0.64] : [0.31, 0.76, -0.13];
+  const steel: Color = [0.23, 0.26, 0.27];
+  const dark: Color = [0.12, 0.15, 0.16];
+  const wood: Color = [0.47, 0.3, 0.17];
+  mesh.box(x - 0.047, y - 0.15, z - 0.04, 0.094, 0.16, 0.1, wood);
+  mesh.box(x - 0.059, y, z - 0.26, 0.118, 0.082, 0.32, steel);
+  mesh.box(x - 0.036, y + 0.016, z - 0.29, 0.072, 0.052, 0.03, dark);
+  mesh.box(x - 0.015, y + 0.079, z - 0.24, 0.03, 0.019, 0.035, dark);
+  if (firstPerson) {
+    const skin: Color = [0.77, 0.54, 0.36];
+    const sleeve: Color = [0.21, 0.36, 0.33];
+    mesh.box(x - 0.065, y - 0.15, z - 0.015, 0.13, 0.1, 0.15, skin);
+    mesh.box(x - 0.082, y - 0.2, z + 0.1, 0.164, 0.14, 0.36, sleeve);
+  }
   return new Float32Array(mesh.vertices);
 }
 

@@ -1,4 +1,4 @@
-import { ground, MAX_X, MAX_Z, MIN_X, MIN_Z } from './terrain.ts';
+import { MAX_X, MAX_Z, MIN_X, MIN_Z } from './terrain.ts';
 
 export const PRESENCE_PATH = '/presence';
 export const PRESENCE_INTERVAL = 100;
@@ -19,8 +19,20 @@ export type Pose = {
   yaw: number;
 };
 
+export const KING_SCALES = [1, 2, 5, 10] as const;
+export type KingScale = (typeof KING_SCALES)[number];
+export const DEFAULT_KING_SCALE = 2;
+
+export function readKingScale(value: unknown): KingScale {
+  return KING_SCALES.find((scale) => scale === value) ?? DEFAULT_KING_SCALE;
+}
+
 export type ChatPost = { id: string; text: string };
-export type NamedPose = Pose & { name?: string; chat?: ChatPost };
+export type NamedPose = Pose & {
+  name?: string;
+  chat?: ChatPost;
+  kingScale?: KingScale;
+};
 
 export function readChat(value: unknown): ChatPost | undefined {
   if (
@@ -136,8 +148,7 @@ function isPostLocation(
     x < MAX_X &&
     typeof z === 'number' &&
     z >= MIN_Z &&
-    z < MAX_Z &&
-    ground(x, z) >= 2
+    z < MAX_Z
   );
 }
 

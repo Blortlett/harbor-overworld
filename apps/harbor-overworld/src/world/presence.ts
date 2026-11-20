@@ -12,6 +12,8 @@ import {
   type Pose,
   type ChatPost,
   readChat,
+  readKingScale,
+  type KingScale,
   ROOM_CAPACITY,
 } from './presence-protocol';
 
@@ -25,6 +27,7 @@ type Track = {
   receivedAt: number;
   walking: boolean;
   king?: true;
+  kingScale?: KingScale;
 };
 
 function interpolate(track: Track, now: number): Pose {
@@ -85,7 +88,7 @@ export function createPresence(
       connection.bufferedAmount > 1024
     )
       return;
-    const { x, y, z, yaw, name, chat } = readPose();
+    const { x, y, z, yaw, name, chat, kingScale } = readPose();
     connection.send(
       JSON.stringify({
         x,
@@ -93,6 +96,7 @@ export function createPresence(
         z,
         name,
         chat,
+        kingScale,
         yaw: Math.atan2(Math.sin(yaw), Math.cos(yaw)),
       }),
     );
@@ -228,13 +232,18 @@ export function createPresence(
           : 0;
         const from =
           previous && distance < 6 ? interpolate(previous, now) : player;
+        const king = 'king' in player && player.king === true;
         present.add(player.id);
         tracks.set(player.id, {
           from,
           to: player,
           name: 'name' in player ? displayName(player.name) : undefined,
           chat: 'chat' in player ? readChat(player.chat) : undefined,
-          king: 'king' in player && player.king === true ? true : undefined,
+          king: king ? true : undefined,
+          kingScale:
+            king && 'kingScale' in player
+              ? readKingScale(player.kingScale)
+              : undefined,
           receivedAt: now,
           walking: distance > 0.02 && distance < 6,
         });
@@ -299,6 +308,7 @@ export function createPresence(
         name: track.name,
         chat: track.chat,
         king: track.king,
+        kingScale: track.kingScale,
         ...interpolate(track, now),
       }));
     },

@@ -158,7 +158,13 @@ export function ground(x: number, z: number) {
 
 export type Color = readonly [number, number, number];
 type Point = readonly [number, number, number];
-export type Obstacle = { x: number; z: number; radius: number };
+export type Obstacle = { x: number; z: number; bottom: number; top: number } & (
+  | { radius: number }
+  | { halfWidth: number; halfDepth: number }
+);
+
+const LIGHTHOUSE_TOP = 11.1 + 0.56;
+export const STATION_TOP = 3.42 + 0.1;
 
 const grass: Color = [0.38, 0.43, 0.205];
 const hills: Color = [0.345, 0.39, 0.235];
@@ -260,20 +266,53 @@ export class Mesh {
   }
 }
 
-function addTree(mesh: Mesh, x: number, y: number, z: number, n: number) {
+function addTree(
+  mesh: Mesh,
+  obstacles: Obstacle[],
+  x: number,
+  y: number,
+  z: number,
+  n: number,
+) {
   const scale = 0.77 + n * 0.65;
   const wood: Color = [0.32, 0.23, 0.13];
   const green: Color = [0.21 + n * 0.1, 0.32 + n * 0.1, 0.26];
-  mesh.box(x - 0.21, y, z - 0.2, 0.42, 3.3 * scale, 0.4, wood, 2);
+  function box(
+    bottom: number,
+    height: number,
+    width: number,
+    depth: number,
+    color: Color,
+    material = 0,
+  ) {
+    const halfWidth = width / 2;
+    const halfDepth = depth / 2;
+    mesh.box(
+      x - halfWidth,
+      bottom,
+      z - halfDepth,
+      width,
+      height,
+      depth,
+      color,
+      material,
+    );
+    obstacles.push({
+      x,
+      z,
+      bottom,
+      top: bottom + height,
+      halfWidth,
+      halfDepth,
+    });
+  }
+  box(y, 3.3 * scale, 0.42, 0.4, wood, 2);
   for (let i = 0; i < 5; i++) {
     const width = (3.04 - i * 0.57) * scale;
-    const level = y + (1.55 + i * 0.78) * scale;
-    mesh.box(
-      x - width / 2,
-      level,
-      z - width / 2,
-      width,
+    box(
+      y + (1.55 + i * 0.78) * scale,
       0.78 * scale,
+      width,
       width,
       tint(green, 0.87 + i * 0.066),
     );
@@ -396,8 +435,7 @@ export function makeTerrain() {
       if (coast || rocky || trail < 2 || Math.hypot(x - lightX, z - lightZ) < 4)
         continue;
       if (x % 3 === 0 && z % 3 === 0 && n > 0.72 && (x < -5 || z < -10)) {
-        addTree(mesh, x + 0.5, y, z + 0.5, noise(z, x));
-        obstacles.push({ x: x + 0.5, z: z + 0.5, radius: 0.39 });
+        addTree(mesh, obstacles, x + 0.5, y, z + 0.5, noise(z, x));
       } else if (n < 0.3 && z > -55) {
         const reeds: Color =
           noise(z, x) > 0.64 ? [0.65, 0.55, 0.27] : [0.42, 0.49, 0.235];
@@ -416,8 +454,15 @@ export function makeTerrain() {
       }
     }
   }
-  addLighthouse(mesh, lightX, ground(lightX, lightZ), lightZ);
-  obstacles.push({ x: lightX, z: lightZ, radius: 2.2 });
+  const lightY = ground(lightX, lightZ);
+  addLighthouse(mesh, lightX, lightY, lightZ);
+  obstacles.push({
+    x: lightX,
+    z: lightZ,
+    radius: 2.2,
+    bottom: lightY - 1,
+    top: lightY + LIGHTHOUSE_TOP,
+  });
   for (let z = 3; z < 16; z += 2) {
     const x = 8 + Math.sin((z + 9) * 0.14) * 3;
     const y = ground(x, z);
