@@ -15,7 +15,8 @@ import {
 import './seaplane.css';
 
 const CABIN_FLOOR = 0.77;
-const BOARDING_RANGE = 3.65;
+const BOARDING_RANGE = 6.5;
+const EXIT_RANGE = 3.65;
 
 export function seaplaneMesh() {
   const mesh = new Mesh();
@@ -131,7 +132,7 @@ export function bindSeaplane(
     const { x, y, z } = flight.pose;
     return (
       Math.hypot(view.x - x, view.z - z) <= BOARDING_RANGE &&
-      Math.abs(view.y - EYE_HEIGHT - y - CABIN_FLOOR) <= 1.2
+      Math.abs(view.y - EYE_HEIGHT - y - CABIN_FLOOR) <= 1.6
     );
   }
 
@@ -167,7 +168,7 @@ export function bindSeaplane(
         point.x < MAX_X &&
         point.z >= MIN_Z &&
         point.z < MAX_Z &&
-        Math.hypot(point.x - x, point.z - z) <= BOARDING_RANGE &&
+        Math.hypot(point.x - x, point.z - z) <= EXIT_RANGE &&
         ground(point.x, point.z) <= DOCK.deck,
     );
     if (!exit) return false;
@@ -268,7 +269,7 @@ export function bindSeaplane(
         reset();
         const { x, z, floor } = SEAPLANE_BOARDING;
         player.reset({ x, z, y: floor + EYE_HEIGHT, yaw: 0, pitch: 0 });
-        announce('The seaplane is back at the dock.');
+        announce('You crashed. :(');
       } else {
         flight = next;
         syncView();

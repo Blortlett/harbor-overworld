@@ -10,7 +10,7 @@ export const CROWN_DURATION = 60_000;
 export const SHOT_INTERVAL = 450;
 export const HIT_LINES = [
   'Ouch that hurt',
-  'Ooh owie that really hurt',
+  'my leg!',
   'ouch.',
   'oof',
   'you have shot me, my guy',

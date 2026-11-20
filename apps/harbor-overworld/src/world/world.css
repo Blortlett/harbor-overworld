@@ -212,6 +212,16 @@ a {
   color: var(--soft);
   font-size: 13px;
 }
+#king-status {
+  padding: 7px 11px;
+  border-color: var(--gold);
+  color: var(--gold);
+  font-size: clamp(17px, 3vw, 22px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
 #king-size {
   min-height: 36px;
   pointer-events: auto;
