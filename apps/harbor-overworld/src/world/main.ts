@@ -19,7 +19,7 @@ import { shouldRejoinWorld, watchWorldUpdates } from './build';
 import { bindIdentityDialog } from './connect';
 import { createControls, POINTER_DEGREES } from './controls';
 import { createCrown } from './crown';
-import { createGunAudio } from './gun-audio';
+import { createWorldAudio } from './world-audio';
 import { createLandShark, type SharkPose } from './land-shark';
 import { bindMobileControls } from './mobile';
 import { createPlayerMovement, EYE_HEIGHT, spawnView } from './movement';
@@ -43,6 +43,7 @@ import {
   postExpired,
   SHOT_INTERVAL,
   type ShotPath,
+  type ShotPoint,
 } from './presence-protocol';
 import { loadProfile } from '../data/profile';
 import { fetchOnce } from '../data/query';
@@ -57,6 +58,7 @@ import {
 } from './renderer';
 import { bindSeaplane } from './seaplane';
 import { SHOT_EFFECT_DURATION, type ShotEffect } from './shot-effects';
+import { soloSharkHit } from './shot-ray';
 import {
   DOCK,
   ground,
@@ -141,7 +143,11 @@ let kingMode = false;
 let kingScale: KingScale = DEFAULT_KING_SCALE;
 let nextShot = 0;
 let avatarName: string | undefined;
-const gunAudio = createGunAudio();
+const enableSound = element<HTMLButtonElement>('enable-sound');
+const worldAudio = createWorldAudio((blocked) => {
+  enableSound.hidden = !entered || !blocked;
+});
+enableSound.addEventListener('click', () => worldAudio.unlock());
 let shotEffects: ShotEffect[] = [];
 let lastDriven: VehicleKind | undefined;
 
@@ -697,9 +703,9 @@ function capture() {
 
 function enter(captureMouse: boolean) {
   if (!renderer) return false;
-  gunAudio.unlock();
   if (!entered) presence.join();
   entered = true;
+  worldAudio.unlock();
   welcome.hidden = true;
   game.classList.add('entered');
   if (document.activeElement instanceof HTMLButtonElement)
@@ -1119,13 +1125,13 @@ async function enterFromWelcome(capturePointer: boolean) {
 }
 
 function joinFromWelcome() {
-  gunAudio.unlock();
+  worldAudio.unlock();
   void controls.run('enter', !game.classList.contains('touch-input'), true);
 }
 game.addEventListener(
   'click',
   () => {
-    if (entered) gunAudio.unlock();
+    if (entered) worldAudio.unlock();
   },
   { capture: true },
 );
@@ -1232,21 +1238,34 @@ function shootOnce() {
   )
     return;
   nextShot = now + SHOT_INTERVAL;
-  gunAudio.unlock();
+  worldAudio.unlock();
   if (
     !presence.shoot({ yaw: view.yaw, pitch: view.pitch, kingScale }) &&
     soloCrown
-  )
-    showGunshot(undefined, true);
+  ) {
+    const eye: ShotPoint = [
+      view.x,
+      view.y + EYE_HEIGHT * (kingScale - 1),
+      view.z,
+    ];
+    const end =
+      soloShark && soloSharkHit(eye, view.yaw, view.pitch, soloShark.pose);
+    if (end && soloShark?.shoot()) {
+      showGunshot({ start: eye, end, impact: true }, true, undefined, true);
+    } else {
+      showGunshot(undefined, true);
+    }
+  }
 }
 
 function showGunshot(
   path: ShotPath | undefined,
   ownShot: boolean,
   line?: number,
+  sharkHit = false,
 ) {
   shotEffects.push({ at: performance.now() / 1000, path, ownShot });
-  gunAudio.play(line);
+  worldAudio.playShot(line, sharkHit);
 }
 
 function jumpOnce() {
@@ -1271,7 +1290,7 @@ document.addEventListener('mousemove', (event) => {
   );
 });
 window.addEventListener('keydown', (event) => {
-  if (entered && event.isTrusted) gunAudio.unlock();
+  if (entered && event.isTrusted) worldAudio.unlock();
   if (openingReply && event.code === 'KeyR' && event.repeat) {
     event.preventDefault();
     return;
@@ -1609,6 +1628,9 @@ function start() {
       if (soloShark.step(dt, walkers).length) respawnPlayer(0, 'shark');
     }
     const shark = soloShark?.pose ?? presence.shark(time);
+    worldAudio.setSharkInWater(
+      entered && shark?.inWater === true && !shark.dying,
+    );
     const extraEyeHeight = kingMode ? EYE_HEIGHT * (kingScale - 1) : 0;
     const camera = plane.aboard
       ? plane.camera()

@@ -135,7 +135,12 @@ export function createPresence(
   onPlots: (snapshot: PlotSnapshot) => void,
   onPlacements: (update: PlacementUpdate) => void,
   onCrown: (crown: LocalCrown | undefined) => void,
-  onGunshot: (path: ShotPath, ownShot: boolean, line?: number) => void,
+  onGunshot: (
+    path: ShotPath,
+    ownShot: boolean,
+    line?: number,
+    sharkHit?: boolean,
+  ) => void,
   onRespawn: (slot: number, cause?: Respawn['cause']) => void,
 ) {
   const session = tabSession();
@@ -287,7 +292,12 @@ export function createPresence(
           if (hit.id === id && 'respawn' in hit && respawn(hit.respawn))
             sendPose(connection);
         }
-        onGunshot(message.path, message.shooter === id, line);
+        onGunshot(
+          message.path,
+          message.shooter === id,
+          line,
+          'sharkHit' in message && message.sharkHit === true,
+        );
         return;
       }
 
@@ -338,11 +348,24 @@ export function createPresence(
         'shark' in message &&
         isPose(message.shark) &&
         'walking' in message.shark &&
-        typeof message.shark.walking === 'boolean'
+        typeof message.shark.walking === 'boolean' &&
+        'inWater' in message.shark &&
+        typeof message.shark.inWater === 'boolean' &&
+        'dying' in message.shark &&
+        typeof message.shark.dying === 'boolean'
       ) {
-        const to = { ...message.shark, walking: message.shark.walking };
+        const to = {
+          ...message.shark,
+          walking: message.shark.walking,
+          inWater: message.shark.inWater,
+          dying: message.shark.dying,
+        };
         sharkTrack = {
-          from: sharkTrack ? interpolate(sharkTrack, now) : to,
+          from:
+            sharkTrack &&
+            Math.hypot(to.x - sharkTrack.to.x, to.z - sharkTrack.to.z) < 3
+              ? interpolate(sharkTrack, now)
+              : to,
           to,
           receivedAt: now,
         };
@@ -514,6 +537,8 @@ export function createPresence(
         return {
           ...interpolate(sharkTrack, now),
           walking: sharkTrack.to.walking,
+          inWater: sharkTrack.to.inWater,
+          dying: sharkTrack.to.dying,
         };
     },
     vehicle(kind: VehicleKind, now: number): Vehicle | undefined {

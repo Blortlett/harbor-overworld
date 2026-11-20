@@ -294,7 +294,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const crown = uploadMesh(crownMesh());
   const crownPickup = uploadMesh(crownMesh(0));
   const harborBoat = uploadMesh(boatMesh());
-  const landShark = uploadMesh(landSharkMesh());
+  const sharkMesh = landSharkMesh();
+  const landShark = uploadMesh(sharkMesh.body);
+  const sharkLegs = uploadMesh(sharkMesh.legs);
   const harborSeaplane = uploadMesh(seaplaneMesh());
   const heldGun = uploadMesh(gunMesh());
   const firstPersonGun = uploadMesh(gunMesh(true));
@@ -551,6 +553,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           shark.walking ? Math.sin(time * 17) * 0.27 : 0,
         );
         mesh(landShark.buffer, landShark.count, avatarAttributes);
+        if (!shark.inWater)
+          mesh(sharkLegs.buffer, sharkLegs.count, avatarAttributes);
       }
       if (crownLocation) {
         const { x, z } = crownLocation;

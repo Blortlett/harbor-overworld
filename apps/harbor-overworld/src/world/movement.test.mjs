@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fly, parkedPlane } from './flight.ts';
-import { createLandShark, LAND_SHARK_SPEED } from './land-shark.ts';
+import {
+  createLandShark,
+  LAND_SHARK_SPEED,
+  SHARK_WALK_SECONDS,
+} from './land-shark.ts';
+import { soloSharkHit } from './shot-ray.ts';
 import { createPlayerMovement, EYE_HEIGHT, WALK_SPEED } from './movement.ts';
 import { replayScenario, scenarios, scenarioView } from './scenarios.ts';
 import {
@@ -188,13 +193,18 @@ test('open water surrounds the island and supports movement far from shore', () 
   assert.equal(plane.pose.x, MAX_X - 4);
 });
 
-test('the land shark walks to sea, chases a swimmer, and kills on contact', () => {
-  const shark = createLandShark();
+test('the land shark swims at the midpoint between walking and sprinting and kills on contact', () => {
+  const shark = createLandShark(() => 0.9);
   const start = shark.pose;
   assert.equal(LAND_SHARK_SPEED, (WALK_SPEED + WALK_SPEED * 2) / 2);
   shark.step(0.1, []);
-  assert.equal(shark.pose.walking, true);
-  assert.ok(Math.abs(shark.pose.x - start.x - LAND_SHARK_SPEED * 0.1) < 1e-9);
+  assert.equal(shark.pose.inWater, true);
+  assert.ok(
+    Math.abs(
+      Math.hypot(shark.pose.x - start.x, shark.pose.z - start.z) -
+        LAND_SHARK_SPEED * 0.1,
+    ) < 1e-9,
+  );
 
   const swimmer = { id: 1, x: 24.5, y: WATER - 0.5, z: 25.5 };
   const bystander = { id: 2, x: -6.5, y: ground(-6.5, 29.5), z: 29.5 };
@@ -202,7 +212,48 @@ test('the land shark walks to sea, chases a swimmer, and kills on contact', () =
   let bitten = [];
   for (let frame = 0; frame < 80 && !bitten.length; frame++)
     bitten = shark.step(0.1, [swimmer, bystander, driver]);
-  assert.equal(shark.pose.walking, false);
-  assert.equal(shark.pose.z, swimmer.z);
+  assert.equal(shark.pose.inWater, true);
   assert.deepEqual(bitten, [swimmer.id]);
+});
+
+test('a shore approach rolls once at 25 percent and a successful walkout lasts 60 seconds', () => {
+  let rolls = 0;
+  const stayingWet = createLandShark(() => {
+    rolls++;
+    return 0.25;
+  });
+  const swimmer = { id: 1, x: 7.5, y: 1, z: 25.5 };
+  for (let frame = 0; frame < 60; frame++) {
+    stayingWet.step(0.1, [swimmer]);
+    assert.equal(stayingWet.pose.inWater, true);
+  }
+  assert.equal(rolls, 1);
+  for (let frame = 0; frame < 120; frame++) stayingWet.step(0.1, []);
+  assert.ok(rolls >= 2, 'a fresh visit to shore gets a fresh roll');
+
+  const walking = createLandShark(() => 0.249);
+  const spawn = walking.pose;
+  for (let frame = 0; frame < 50 && walking.pose.inWater; frame++)
+    walking.step(0.1, []);
+  assert.equal(walking.pose.inWater, false);
+  assert.equal(walking.pose.walking, true);
+  walking.step(SHARK_WALK_SECONDS - 0.1, []);
+  assert.equal(walking.pose.inWater, false);
+  walking.step(0.1, []);
+  assert.deepEqual(walking.pose, spawn);
+});
+
+test('the King can hit a swimming shark, which respawns after the scream', () => {
+  const shark = createLandShark(() => 0.9);
+  const start = shark.pose;
+  shark.step(0.1, []);
+  const origin = [shark.pose.x + 8, shark.pose.y + 1.4, shark.pose.z];
+  assert.ok(soloSharkHit(origin, -Math.PI / 2, 0, shark.pose));
+  assert.ok(shark.shoot());
+  assert.equal(shark.pose.dying, true);
+  assert.equal(soloSharkHit(origin, -Math.PI / 2, 0, shark.pose), undefined);
+  shark.step(0.8, []);
+  assert.equal(shark.pose.dying, true);
+  shark.step(0.1, []);
+  assert.deepEqual(shark.pose, start);
 });

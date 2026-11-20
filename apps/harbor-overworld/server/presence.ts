@@ -163,14 +163,25 @@ export function attachPresence(
     shotObstacles ??= makeTerrain().obstacles;
     const players = playersWithPoses();
     if (practice) players.push(practiceTarget());
-    const { path, target } = traceShot(
+    const { path, target, sharkHit } = traceShot(
       { ...client.pose, id: client.id },
       aim,
       players,
       shotObstacles,
       plots.snapshot()?.papers.length ?? 0,
+      shark.pose,
     );
-    const shot = { type: 'gunshot' as const, shooter: client.id, path };
+    const shot = {
+      type: 'gunshot' as const,
+      shooter: client.id,
+      path,
+      sharkHit,
+    };
+    if (sharkHit) {
+      shark.shoot();
+      broadcast(shot);
+      return;
+    }
     const line = Math.floor(Math.random() * HIT_LINES.length);
     if (practice && target === PRACTICE_ID) {
       practiceTargetIndex =

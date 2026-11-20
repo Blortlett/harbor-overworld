@@ -1,3 +1,9 @@
+import {
+  GAME_SHOT_RANGE,
+  rayBox,
+  sharkHitDepth,
+} from '../src/world/shot-ray.ts';
+import type { SharkPose } from '../src/world/land-shark.ts';
 import { EYE_HEIGHT } from '../src/world/movement.ts';
 import type {
   Player,
@@ -15,34 +21,8 @@ import {
   WATER,
 } from '../src/world/terrain.ts';
 
-const RANGE = 65;
 const BODY_HALF_WIDTH = 0.38;
 const BODY_HEIGHT = 1.52;
-
-function rayBox(
-  origin: ShotPoint,
-  direction: ShotPoint,
-  minimum: ShotPoint,
-  maximum: ShotPoint,
-  limit: number,
-) {
-  let entry = 0;
-  let exit = limit;
-  for (let axis = 0; axis < 3; axis++) {
-    const component = direction[axis];
-    if (Math.abs(component) < 1e-8) {
-      if (origin[axis] < minimum[axis] || origin[axis] > maximum[axis])
-        return undefined;
-      continue;
-    }
-    const a = (minimum[axis] - origin[axis]) / component;
-    const b = (maximum[axis] - origin[axis]) / component;
-    entry = Math.max(entry, Math.min(a, b));
-    exit = Math.min(exit, Math.max(a, b));
-    if (entry > exit) return undefined;
-  }
-  return entry;
-}
 
 export function traceShot(
   shooter: Pose & { id: number },
@@ -50,7 +30,8 @@ export function traceShot(
   players: readonly Player[],
   obstacles: readonly Obstacle[],
   stationCount: number,
-): { path: ShotPath; target?: number } {
+  shark: SharkPose,
+): { path: ShotPath; target?: number; sharkHit?: true } {
   const level = Math.cos(aim.pitch);
   const origin: ShotPoint = [
     shooter.x,
@@ -75,7 +56,7 @@ export function traceShot(
     origin[1] + distance * direction[1],
     origin[2] + distance * direction[2],
   ];
-  let nearest = RANGE;
+  let nearest = GAME_SHOT_RANGE;
   let hit: Player | undefined;
   for (const player of players) {
     if (player.id === shooter.id) continue;
@@ -92,6 +73,12 @@ export function traceShot(
       hit = player;
     }
   }
+  const sharkDistance = sharkHitDepth(origin, direction, shark, nearest);
+  if (sharkDistance !== undefined) {
+    nearest = sharkDistance;
+    hit = undefined;
+  }
+
   function blocked([x, y, z]: ShotPoint) {
     if (y < Math.max(WATER, ground(x, z))) return true;
     for (const obstacle of obstacles) {
@@ -121,7 +108,12 @@ export function traceShot(
     }
   }
   return {
-    path: { start: muzzle, end: pointAt(nearest), impact: !!hit },
+    path: {
+      start: muzzle,
+      end: pointAt(nearest),
+      impact: !!hit || sharkDistance !== undefined,
+    },
     target: hit?.id,
+    sharkHit: sharkDistance === undefined ? undefined : true,
   };
 }

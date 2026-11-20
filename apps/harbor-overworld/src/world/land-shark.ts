@@ -1,42 +1,157 @@
 import { WALK_SPEED } from './movement.ts';
 import type { Pose } from './presence-protocol.ts';
-import { type Color, ground, Mesh, WATER } from './terrain.ts';
+import { type Color, ground, inWorld, Mesh, WATER } from './terrain.ts';
 
 export const LAND_SHARK_SPEED = WALK_SPEED * 1.5;
-export const LAND_SHARK_START = { x: -9.5, z: 25.5 };
-const SEA_ENTRY = { x: 12.5, z: LAND_SHARK_START.z };
-const PATROL = [SEA_ENTRY, { x: 24.5, z: 29.5 }, { x: 20.5, z: 39.5 }];
+export const SHARK_WALK_SECONDS = 60;
+const OCEAN_START = { x: 18.5, z: 29.5 };
+const BEACH = { x: 7.5, z: 25.5 };
+const OCEAN_PATROL = [BEACH, { x: 20.5, z: 39.5 }, OCEAN_START];
+const LAND_PATROL = [
+  { x: -9.5, z: 25.5 },
+  { x: -3.5, z: 19.5 },
+  { x: -13.5, z: 12.5 },
+];
+const SCREAM_SECONDS = 0.9;
 const CONTACT_RADIUS = 1.15;
+const SWIM_HEIGHT = WATER - 0.92;
+const SHORE_OFFSETS = [
+  [-2, 0],
+  [0, -2],
+  [2, 0],
+  [0, 2],
+  [-1.5, -1.5],
+  [-1.5, 1.5],
+  [1.5, -1.5],
+  [1.5, 1.5],
+] as const;
+const SWIM_TURNS = [
+  0,
+  Math.PI / 4,
+  -Math.PI / 4,
+  Math.PI / 2,
+  -Math.PI / 2,
+  Math.PI,
+];
 
-export type SharkPose = Pose & { walking: boolean };
-type Swimmer = { id: number; x: number; y: number; z: number };
+export type SharkPose = Pose & {
+  walking: boolean;
+  inWater: boolean;
+  dying: boolean;
+};
+type SharkTarget = { x: number; z: number };
+type Swimmer = SharkTarget & { id: number; y: number };
 
 function inWater(player: Swimmer) {
   return ground(player.x, player.z) < WATER && player.y <= WATER + 0.15;
 }
 
-export function createLandShark() {
-  const { x, z } = LAND_SHARK_START;
-  let pose: SharkPose = {
-    x,
-    z,
-    y: ground(x, z),
-    yaw: Math.PI / 2,
+function shoreNear({ x, z }: SharkTarget): SharkTarget | undefined {
+  for (const [dx, dz] of SHORE_OFFSETS) {
+    if (ground(x + dx, z + dz) >= WATER) return { x: x + dx, z: z + dz };
+  }
+}
+
+function swimStep(pose: SharkPose, yaw: number, distance: number) {
+  for (const turn of SWIM_TURNS) {
+    const course = yaw + turn;
+    const dx = Math.sin(course) * distance;
+    const dz = -Math.cos(course) * distance;
+    const x = pose.x + dx;
+    const z = pose.z + dz;
+    if (
+      inWorld(x, z) &&
+      ground(x, z) < WATER &&
+      ground(pose.x + dx / 2, pose.z + dz / 2) < WATER
+    ) {
+      return { x, z, yaw: Math.atan2(Math.sin(course), Math.cos(course)) };
+    }
+  }
+  return pose;
+}
+
+function spawnShark(): SharkPose {
+  return {
+    ...OCEAN_START,
+    y: SWIM_HEIGHT,
+    yaw: -Math.PI / 2,
     walking: false,
+    inWater: true,
+    dying: false,
   };
-  let reachedSea = false;
-  let patrolPoint = 1;
+}
+
+export function createLandShark(random = Math.random) {
+  let pose = spawnShark();
+  let landing: SharkTarget | undefined;
+  let walkingTime: number | undefined;
+  let shoreChecked = false;
+  let timeOffshore = 0;
+  let oceanPoint = 0;
+  let landPoint = 0;
+  let respawnDelay = 0;
+
+  function respawn() {
+    pose = spawnShark();
+    landing = undefined;
+    walkingTime = undefined;
+    shoreChecked = false;
+    timeOffshore = 0;
+    oceanPoint = 0;
+    landPoint = 0;
+    respawnDelay = 0;
+  }
 
   return {
     get pose() {
       return pose;
     },
+    shoot() {
+      if (pose.dying) return false;
+      respawnDelay = SCREAM_SECONDS;
+      pose = { ...pose, walking: false, dying: true };
+      return true;
+    },
     step(seconds: number, players: readonly Swimmer[]) {
-      let target = reachedSea ? PATROL[patrolPoint] : SEA_ENTRY;
-      if (reachedSea) {
+      if (pose.dying) {
+        respawnDelay -= seconds;
+        if (respawnDelay <= 1e-6) respawn();
+        return [];
+      }
+      if (walkingTime !== undefined) {
+        walkingTime -= seconds;
+        if (walkingTime <= 1e-6) {
+          respawn();
+          return [];
+        }
+      }
+
+      if (walkingTime === undefined && !landing) {
+        const shore = shoreNear(pose);
+        if (shore) {
+          timeOffshore = 0;
+          if (!shoreChecked) {
+            shoreChecked = true;
+            if (random() < 0.25) landing = shore;
+          }
+        } else {
+          timeOffshore += seconds;
+          if (timeOffshore >= 0.5) shoreChecked = false;
+        }
+      }
+
+      const patrol = walkingTime === undefined ? OCEAN_PATROL : LAND_PATROL;
+      const patrolIndex = walkingTime === undefined ? oceanPoint : landPoint;
+      let target = landing ?? patrol[patrolIndex];
+      if (!landing) {
         let nearest = Infinity;
         for (const player of players) {
-          if (!inWater(player)) continue;
+          const feet = ground(player.x, player.z);
+          if (
+            !inWater(player) &&
+            (walkingTime === undefined || feet < WATER || player.y > feet + 1.1)
+          )
+            continue;
           const distance = Math.hypot(player.x - pose.x, player.z - pose.z);
           if (distance < nearest) {
             target = player;
@@ -48,32 +163,43 @@ export function createLandShark() {
       const dx = target.x - pose.x;
       const dz = target.z - pose.z;
       const distance = Math.hypot(dx, dz);
-      const step = Math.min(distance, LAND_SHARK_SPEED * seconds);
-      const fraction = distance > 0 ? step / distance : 0;
-      const x = pose.x + dx * fraction;
-      const z = pose.z + dz * fraction;
-      const land = ground(x, z);
-      const walking = land >= WATER;
-      const height = walking ? land : WATER - 0.92;
+      const stride = Math.min(distance, LAND_SHARK_SPEED * seconds);
+      const yaw = distance > 0.01 ? Math.atan2(dx, -dz) : pose.yaw;
+      const canExitSea = !!landing || walkingTime !== undefined;
+      const next = canExitSea
+        ? {
+            x: pose.x + Math.sin(yaw) * stride,
+            z: pose.z - Math.cos(yaw) * stride,
+            yaw,
+          }
+        : swimStep(pose, yaw, stride);
+      const groundHeight = ground(next.x, next.z);
+      const swimming = groundHeight < WATER;
+      const height = swimming ? SWIM_HEIGHT : groundHeight;
       pose = {
-        x,
-        z,
+        ...next,
         y: pose.y + (height - pose.y) * Math.min(1, seconds * 12),
-        yaw: distance > 0.01 ? Math.atan2(dx, -dz) : pose.yaw,
-        walking: walking && step > 0,
+        walking: !swimming && stride > 0,
+        inWater: swimming,
+        dying: false,
       };
-      if (distance <= step) {
-        if (!reachedSea) reachedSea = true;
-        else if (target === PATROL[patrolPoint])
-          patrolPoint = (patrolPoint + 1) % PATROL.length;
+      if (landing && !swimming) {
+        walkingTime = SHARK_WALK_SECONDS;
+        landing = undefined;
+      } else if (distance <= stride && target === patrol[patrolIndex]) {
+        if (walkingTime === undefined)
+          oceanPoint = (oceanPoint + 1) % OCEAN_PATROL.length;
+        else landPoint = (landPoint + 1) % LAND_PATROL.length;
       }
       return players
         .filter(
           (player) =>
-            Math.hypot(player.x - x, player.z - z) <= CONTACT_RADIUS &&
-            (walking
-              ? Math.abs(player.y - land) < 1.05
-              : reachedSea && inWater(player)),
+            Math.hypot(player.x - pose.x, player.z - pose.z) <=
+              CONTACT_RADIUS &&
+            (swimming
+              ? inWater(player)
+              : ground(player.x, player.z) >= WATER &&
+                Math.abs(player.y - groundHeight) < 1.05),
         )
         .map((player) => player.id);
     },
@@ -82,14 +208,15 @@ export function createLandShark() {
 
 export function landSharkMesh() {
   const mesh = new Mesh();
+  const legs = new Mesh();
   const slate: Color = [0.265, 0.43, 0.49];
   const fin: Color = [0.19, 0.33, 0.4];
   const belly: Color = [0.74, 0.79, 0.72];
   const ink: Color = [0.08, 0.13, 0.16];
   for (const [index, x] of [-0.37, 0.1].entries()) {
     const limb = 4 + index;
-    mesh.box(x, 0.1, -0.04, 0.27, 0.53, 0.28, slate, limb);
-    mesh.box(x - 0.025, 0, -0.24, 0.32, 0.16, 0.55, fin, limb);
+    legs.box(x, 0.1, -0.04, 0.27, 0.53, 0.28, slate, limb);
+    legs.box(x - 0.025, 0, -0.24, 0.32, 0.16, 0.55, fin, limb);
   }
 
   mesh.box(-0.47, 0.56, -0.62, 0.94, 0.33, 1.25, belly);
@@ -126,5 +253,8 @@ export function landSharkMesh() {
   mesh.box(-0.14, 0.91, 1.12, 0.28, 0.22, 0.43, slate);
   mesh.box(-0.09, 0.72, 1.43, 0.18, 0.83, 0.23, fin);
   mesh.box(-0.085, 1.38, 1.56, 0.17, 0.32, 0.19, fin);
-  return new Float32Array(mesh.vertices);
+  return {
+    body: new Float32Array(mesh.vertices),
+    legs: new Float32Array(legs.vertices),
+  };
 }

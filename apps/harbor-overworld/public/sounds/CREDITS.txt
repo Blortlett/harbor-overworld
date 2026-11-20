@@ -10,3 +10,6 @@ https://freesound.org/people/craigsmith/sounds/675810/
 
 Both recordings are distributed under the CC0 1.0 public domain dedication.
 https://creativecommons.org/publicdomain/zero/1.0/
+
+shark-scream.mp3 and shark-water.mp3
+Original synthesized effects for Harbor Overworld.

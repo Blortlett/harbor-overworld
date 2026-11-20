@@ -56,6 +56,7 @@ export type ShotPath = {
 export type Gunshot = {
   type: 'gunshot';
   shooter: number;
+  sharkHit?: true;
   path: ShotPath;
   hit?: { id: number; line: number; respawn?: Respawn };
 };
