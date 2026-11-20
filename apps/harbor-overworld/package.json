@@ -1,6 +1,6 @@
 {
   "name": "harbor-overworld",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,10 @@
     "build": "vite build",
     "build:presence": "node server/build.mjs",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "playground": "vite --mode playground --host 127.0.0.1 --strictPort",
+    "test:movement": "node --test src/world/movement.test.mjs",
+    "test:presence": "pnpm run build:presence && node --test server/presence.test.mjs"
   },
   "dependencies": {
     "@polycentric/js-browser": "workspace:*",

@@ -18,7 +18,7 @@ import {
   ROOM_CAPACITY,
 } from '../src/world/presence-protocol.ts';
 import { verifyKing } from './king.ts';
-import { createPlots } from './plots.ts';
+import { createPlots, type PlotFeed } from './plots.ts';
 
 const IDLE_MS = 20_000;
 const MAX_QUEUED_BYTES = 64 * 1024;
@@ -46,7 +46,11 @@ function sameHost(request: IncomingMessage) {
   }
 }
 
-export function attachPresence(http: HttpServer, plotsFile?: string) {
+export function attachPresence(
+  http: HttpServer,
+  plotsFile?: string,
+  feed?: PlotFeed,
+) {
   const server = new WebSocketServer({ noServer: true, maxPayload: 4096 });
   const clients = new Map<string, Client>();
   let nextId = 1;
@@ -57,9 +61,14 @@ export function attachPresence(http: HttpServer, plotsFile?: string) {
     for (const { ws } of clients.values())
       if (ws.readyState === WebSocket.OPEN) ws.send(message);
   }
-  const plots = createPlots(plotsFile, broadcast, (day, post) => {
-    broadcast({ type: 'placements', day, posts: [post], live: true });
-  });
+  const plots = createPlots(
+    plotsFile,
+    broadcast,
+    (day, post) => {
+      broadcast({ type: 'placements', day, posts: [post], live: true });
+    },
+    feed ? [feed] : undefined,
+  );
 
   function setKing(client: Client, enabled: boolean) {
     if (enabled) {

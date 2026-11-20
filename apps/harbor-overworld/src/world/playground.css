@@ -1,0 +1,17 @@
+.playground-controls {
+  position: absolute;
+  z-index: 3;
+  top: 6rem;
+  left: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem;
+  max-width: calc(100vw - 2rem);
+  font-size: 0.85rem;
+}
+
+.playground-controls a {
+  color: inherit;
+}

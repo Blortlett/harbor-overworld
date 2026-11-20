@@ -23,31 +23,32 @@ import {
 import { STATIONS } from '../src/world/terrain.ts';
 import { verifyProof } from './signature.ts';
 
+const capacity = STATIONS.length;
+const FEED_PAGE_LIMIT = 5;
+
+function connectFeed(baseUrl: string) {
+  const feed = new FeedsServiceClient(
+    new GrpcWebFetchTransport({ baseUrl, format: 'binary' }),
+  );
+  return (forwardToken?: string) =>
+    feed.getExploreFeed(
+      {
+        pageParams: { limit: 50, forwardToken },
+        omitLabels: [],
+        sortBy: SortPostsBy.LATEST,
+      },
+      { timeout: 6000 },
+    ).response;
+}
+
+export type PlotFeed = ReturnType<typeof connectFeed>;
 const configuredFeedUrls = process.env.OVERWORLD_FEED_BASE_URLS?.split(',')
   .map((url) => url.trim())
   .filter(Boolean);
 const feedUrls = configuredFeedUrls?.length
   ? configuredFeedUrls
   : ['https://srv.harbor.social', 'https://srv.polycentric.io'];
-const feeds = feedUrls.map(
-  (baseUrl) =>
-    new FeedsServiceClient(
-      new GrpcWebFetchTransport({ baseUrl, format: 'binary' }),
-    ),
-);
-const capacity = STATIONS.length;
-const FEED_PAGE_LIMIT = 5;
-
-function loadFeed(feed: FeedsServiceClient, forwardToken?: string) {
-  return feed.getExploreFeed(
-    {
-      pageParams: { limit: 50, forwardToken },
-      omitLabels: [],
-      sortBy: SortPostsBy.LATEST,
-    },
-    { timeout: 6000 },
-  ).response;
-}
+const harborFeeds = feedUrls.map(connectFeed);
 
 function readCandidates(bundles: EventBundle[], day: string, now: number) {
   const posts = [];
@@ -82,6 +83,7 @@ export function createPlots(
   file: string | undefined,
   broadcast: (snapshot: PlotSnapshot) => void,
   placed: (day: string, post: PlacedPost) => void,
+  feeds = harborFeeds,
 ) {
   let day = plotDay(Date.now());
   let plots = new Map<string, string>();
@@ -190,7 +192,7 @@ export function createPlots(
     polling = true;
     try {
       const firstPage = await Promise.any(
-        feeds.map(async (feed) => ({ feed, page: await loadFeed(feed) })),
+        feeds.map(async (feed) => ({ feed, page: await feed() })),
       );
       const { feed } = firstPage;
       let page = firstPage.page;
@@ -217,7 +219,7 @@ export function createPlots(
         )
           break;
         cursor = next;
-        const following = await loadFeed(feed, cursor).catch(() => undefined);
+        const following = await feed(cursor).catch(() => undefined);
         if (!following) break;
         page = following;
       }

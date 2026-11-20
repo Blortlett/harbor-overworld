@@ -10,6 +10,9 @@ permissions:
 
 jobs:
   build:
+    concurrency:
+      group: overworld-build-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -20,6 +23,11 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      - name: Identify WASM build inputs
+        id: wasm-key
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-overworld-wasm-${{ hashFiles('**/Cargo.toml', 'Cargo.lock', '.cargo/**', 'packages/rs-core/**', 'packages/rs-common/**', 'packages/rs-core-wasm/**', 'protos/**', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'patches/**', '.nvmrc', 'apps/harbor-overworld/scripts/install-wasm-tools.sh') }}
+        run: printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
       - name: Restore compiled WASM and bindings
         id: wasm
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -27,7 +35,16 @@ jobs:
           path: |
             packages/rs-core-wasm/src/generated/wasm
             packages/rs-core-wasm/dist/node
-          key: ${{ runner.os }}-${{ runner.arch }}-overworld-wasm-${{ hashFiles('**/Cargo.toml', 'Cargo.lock', '.cargo/**', 'packages/rs-core/**', 'packages/rs-common/**', 'packages/rs-core-wasm/**', 'protos/**', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'patches/**', '.nvmrc', '.github/workflows/build-overworld.yml') }}
+          key: ${{ steps.wasm-key.outputs.key }}
+      - name: Restore generated and compiled Harbor SDK
+        id: sdk
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            packages/js-core/src/proto
+            packages/js-core/dist
+            packages/js-browser/dist
+          key: harbor-sdk-v1-${{ steps.wasm-key.outputs.key }}-${{ hashFiles('packages/js-core/**', 'packages/js-browser/**', 'tools/tsconfig/**', 'buf.yaml', 'buf.gen.yaml') }}
       - name: Install JavaScript dependencies
         run: |
           npm install --global "$(node -p 'require("./package.json").packageManager')"
@@ -35,23 +52,18 @@ jobs:
       - name: Install WASM build tools
         if: steps.wasm.outputs.cache-hit != 'true'
         run: |
-          rustup toolchain install 1.100.0 --profile minimal --target wasm32-unknown-unknown
-          rustup override set 1.100.0
-          sudo apt-get update -qq
-          sudo apt-get install -y protobuf-compiler
-          archive=wasm-bindgen-0.2.130-x86_64-unknown-linux-musl
-          cd "$RUNNER_TEMP"
-          curl --fail --location --retry 3 -o "$archive.tar.gz" "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.130/$archive.tar.gz"
-          echo "9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f  $archive.tar.gz" | sha256sum --check
-          tar -xzf "$archive.tar.gz" -C "$HOME/.cargo/bin" --strip-components=1 "$archive/wasm-bindgen"
+          bash apps/harbor-overworld/scripts/install-wasm-tools.sh
       - name: Build WASM and bindings
         if: steps.wasm.outputs.cache-hit != 'true'
         run: pnpm --filter @polycentric/rs-core-wasm build --profile wasm-release
-      - name: Build SDK and site
+      - name: Build Harbor SDK
+        if: steps.sdk.outputs.cache-hit != 'true'
         run: |
           pnpm --filter @polycentric/js-core generate
           pnpm --filter @polycentric/js-core build
           pnpm --filter @polycentric/js-browser build
+      - name: Check types and build site
+        run: |
           pnpm --filter harbor-overworld typecheck
           pnpm --filter harbor-overworld build
       - name: Check static output
@@ -60,21 +72,80 @@ jobs:
           test -s index.html && test -s licenses.txt
           compgen -G 'assets/*.wasm' > /dev/null
           compgen -G 'assets/*.js' > /dev/null
-      - name: Bundle presence server
-        run: pnpm --filter harbor-overworld build:presence
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           package-manager-cache: false
       - name: Test movement and standalone presence on Node 22
-        run: node --test apps/harbor-overworld/server/presence.test.mjs apps/harbor-overworld/src/world/movement.test.mjs
+        run: |
+          pnpm --filter harbor-overworld test:movement
+          pnpm --filter harbor-overworld test:presence
+      - name: Package release
+        run: bash apps/harbor-overworld/scripts/package-release.sh "$RUNNER_TEMP/overworld-release" "$GITHUB_SHA"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: overworld-site
-          path: apps/harbor-overworld/dist/
+          name: overworld-release
+          path: ${{ runner.temp }}/overworld-release/
           if-no-files-found: error
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+
+  publish:
+    if: github.event_name == 'push' && github.repository == 'SomewhatJustin/harbor-overworld'
+    needs: build
+    outputs:
+      published: ${{ steps.release.outputs.published }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: overworld-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: overworld-presence
-          path: apps/harbor-overworld/dist-presence/server.mjs
-          if-no-files-found: error
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: overworld-release
+          path: ${{ runner.temp }}/overworld-release
+      - name: Publish tested artifacts
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash apps/harbor-overworld/scripts/publish-release.sh "$RUNNER_TEMP/overworld-release"
+      - name: Notify deployment host
+        if: steps.release.outputs.published == 'true' && vars.OVERWORLD_DEPLOY_URL != ''
+        env:
+          DEPLOY_URL: ${{ vars.OVERWORLD_DEPLOY_URL }}
+          DEPLOY_TOKEN: ${{ secrets.OVERWORLD_DEPLOY_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          test -n "$DEPLOY_TOKEN"
+          if ! curl --fail --silent --show-error --max-time 10 --proto '=https' \
+            --header "Authorization: Bearer $DEPLOY_TOKEN" \
+            --header "X-Overworld-Release: $RELEASE_TAG" \
+            --json "@$RUNNER_TEMP/overworld-release/build.json" "$DEPLOY_URL" --output /dev/null; then
+            printf '::warning::Deployment notification failed. The live check will continue.\n'
+          fi
+
+  verify:
+    if: ${{ !cancelled() && needs.publish.outputs.published == 'true' }}
+    # A configured deploy hook may fail while the host can still pick up the release.
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    concurrency:
+      group: overworld-verify
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Verify the live site and room
+        env:
+          OVERWORLD_SITE: ${{ vars.OVERWORLD_SITE || 'https://overworld.justin.how' }}
+        run: node apps/harbor-overworld/scripts/check-live.mjs "$OVERWORLD_SITE" "$GITHUB_SHA" --wait=180

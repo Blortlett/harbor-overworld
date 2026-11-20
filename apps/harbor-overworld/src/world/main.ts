@@ -16,6 +16,7 @@ import { decodePostBundle, eventKeyFromId, type PostData } from '../data/posts';
 import { coatIndex, COATS } from './avatar';
 import { bindIdentityDialog } from './connect';
 import { bindMobileControls } from './mobile';
+import { createPlayerMovement, EYE_HEIGHT, spawnView } from './movement';
 import { PostNotice } from './notice';
 import { type Avatar, createPresence } from './presence';
 import {
@@ -44,11 +45,8 @@ import {
   DROP_DURATION,
   DROP_HALF_WIDTH,
   DROP_HEIGHT,
-  EYE_HEIGHT,
   type FallingPost,
   facingNotice,
-  spawnView,
-  walk,
 } from './renderer';
 import {
   ground,
@@ -99,7 +97,14 @@ const movement = [
   'ArrowUp',
   'ArrowDown',
 ];
-const view = spawnView();
+const player = createPlayerMovement();
+const { view } = player;
+const isPlayground =
+  import.meta.env.DEV && import.meta.env.MODE === 'playground';
+let playground:
+  | ReturnType<typeof import('./playground').setupPlayground>
+  | undefined;
+const playgroundLikes = new Set<string>();
 const roomStatus = element('room-status');
 const kingStatus = element('king-status');
 const kingSizeButton = element<HTMLButtonElement>('king-size');
@@ -107,10 +112,6 @@ const welcomeIdentity = element<HTMLFormElement>('welcome-identity');
 const welcomeName = element<HTMLInputElement>('welcome-name');
 const welcomeError = element('welcome-error');
 const enterButton = element<HTMLButtonElement>('enter-world');
-let floor = view.y - EYE_HEIGHT;
-const GRAVITY = 33;
-const JUMP_SPEED = 8.2;
-let airborne: { height: number; startedAt: number; speed: number } | undefined;
 let kingMode = false;
 let kingScale: KingScale = DEFAULT_KING_SCALE;
 let avatarName: string | undefined;
@@ -122,10 +123,9 @@ const presence = createPresence(
     kingScale: kingMode ? kingScale : undefined,
   }),
   (slot) => {
+    if (playground?.scene) return;
     if (Math.hypot(view.x - SPAWN.x, view.z - SPAWN.z) > 0.25) return;
-    const { x, y, z } = spawnView(slot);
-    Object.assign(view, { x, y, z });
-    floor = y - EYE_HEIGHT;
+    player.reset({ ...spawnView(slot), yaw: view.yaw, pitch: view.pitch });
   },
   (label) => {
     roomStatus.hidden = false;
@@ -221,7 +221,7 @@ function updatePlots({ day, papers }: { day: string; papers: string[] }) {
   setNotices(posts);
   markNetwork(
     'live',
-    'PRODUCTION',
+    isPlayground ? 'PLAYGROUND' : 'PRODUCTION',
     `${posts.length} live ${posts.length === 1 ? 'post' : 'posts'}`,
   );
 }
@@ -505,7 +505,7 @@ function markNetwork(state: string, name: string, detail: string) {
 }
 
 async function loadPosts() {
-  if (refresh.disabled) return;
+  if (isPlayground || refresh.disabled) return;
   refresh.disabled = true;
   markNetwork('loading', 'CONNECTING', 'Harbor feed');
   try {
@@ -617,13 +617,25 @@ function updateLikeButton() {
   const post = focusedNotice?.post;
   likeButton.setAttribute(
     'aria-pressed',
-    String(!!(post && client && findLike(client, post.id))),
+    String(
+      !!(
+        post &&
+        (isPlayground
+          ? playgroundLikes.has(post.id)
+          : client && findLike(client, post.id))
+      ),
+    ),
   );
 }
 
 async function toggleLike() {
   const post = focusedNotice?.post;
   if (!post || busy) return;
+  if (isPlayground) {
+    if (!playgroundLikes.delete(post.id)) playgroundLikes.add(post.id);
+    updateLikeButton();
+    return;
+  }
   const activeClient = client;
   if (!activeClient?.activeIdentityKey || !activeClient.currentKeyPair) {
     openIdentity();
@@ -671,6 +683,10 @@ function showComposer() {
 }
 
 async function openChat(target?: PostData) {
+  if (isPlayground) {
+    announce('Playground uses a sample feed.');
+    return;
+  }
   if (chatPanel.open || connectPanel.open) return;
   if (!pending && replyTo?.id !== target?.id) draft.value = '';
   if (!pending) replyTo = target;
@@ -945,8 +961,7 @@ document.addEventListener('pointerlockchange', () => {
   else resumePointer = false;
 });
 function handleLook(deltaX: number, deltaY: number) {
-  view.yaw += deltaX * 0.00245;
-  view.pitch = Math.max(-1.31, Math.min(1.31, view.pitch - deltaY * 0.00245));
+  if (!playground?.replaying) player.look(deltaX * 0.00245, -deltaY * 0.00245);
 }
 
 function setKingScale(scale: KingScale) {
@@ -961,25 +976,15 @@ function cycleKingScale() {
     );
 }
 
-function jumpHeight(time: number) {
-  if (!airborne) return floor;
-  const { height, startedAt, speed } = airborne;
-  const seconds = Math.max(0, (time - startedAt) / 1000);
-  return Math.min(
-    80 - EYE_HEIGHT,
-    height + speed * seconds - (GRAVITY * seconds ** 2) / 2,
-  );
-}
-
 function jumpOnce() {
-  if (!entered || chatPanel.open || connectPanel.open) return;
-  if (!kingMode && airborne) return;
-  const startedAt = performance.now();
-  airborne = {
-    height: Math.max(floor, jumpHeight(startedAt)),
-    startedAt,
-    speed: kingMode ? JUMP_SPEED * Math.SQRT2 : JUMP_SPEED,
-  };
+  if (
+    !playground?.replaying &&
+    entered &&
+    !chatPanel.open &&
+    !connectPanel.open
+  ) {
+    player.jump(performance.now(), kingMode);
+  }
 }
 
 document.addEventListener('mousemove', (event) => {
@@ -1152,7 +1157,7 @@ function start() {
     drawHud();
     return;
   }
-  restorePlacements();
+  if (!isPlayground) restorePlacements();
   let previous = performance.now();
   function frame(time: number) {
     requestAnimationFrame(frame);
@@ -1161,39 +1166,31 @@ function start() {
     const dt = Math.min(0.05, (time - previous) / 1000);
     previous = time;
     const exploring = entered && !chatPanel.open && !connectPanel.open;
-    const jumpFeet = airborne ? jumpHeight(time) : undefined;
-    let feet = jumpFeet;
-    if (exploring) {
-      view.yaw +=
-        (Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft'))) *
-        dt *
-        1.6;
-      view.pitch = Math.max(
-        -1.31,
-        Math.min(
-          1.31,
-          view.pitch +
-            (Number(keys.has('ArrowUp')) - Number(keys.has('ArrowDown'))) * dt,
-        ),
-      );
-      ({ floor, feet } = walk(
-        view,
-        keys,
+    const collisions = {
+      obstacles: renderer.obstacles,
+      stationCount: notices.length,
+    };
+    if (!exploring || !playground?.step(time, collisions)) {
+      player.step(
+        time,
         dt,
-        renderer.obstacles,
-        notices.length,
-        mobile.movement,
-        jumpFeet,
-        airborne ? view.y - EYE_HEIGHT : floor,
-      ));
-    }
-    if (airborne && feet !== undefined) {
-      view.y = Math.max(floor, feet) + EYE_HEIGHT;
-      if (time > airborne.startedAt && feet <= floor) airborne = undefined;
-      else if (jumpFeet !== undefined && feet < jumpFeet)
-        airborne = { height: feet, startedAt: time, speed: 0 };
-    } else {
-      view.y += (floor + EYE_HEIGHT - view.y) * Math.min(1, dt * 11);
+        exploring
+          ? {
+              forward:
+                Number(keys.has('KeyW')) -
+                Number(keys.has('KeyS')) +
+                mobile.movement.forward,
+              sideways:
+                Number(keys.has('KeyD')) -
+                Number(keys.has('KeyA')) +
+                mobile.movement.sideways,
+              turn:
+                Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft')),
+              look: Number(keys.has('ArrowUp')) - Number(keys.has('ArrowDown')),
+            }
+          : undefined,
+        collisions,
+      );
     }
     const extraEyeHeight = kingMode ? EYE_HEIGHT * (kingScale - 1) : 0;
     const camera = { ...view, y: view.y + extraEyeHeight };
@@ -1217,8 +1214,27 @@ function start() {
   requestAnimationFrame(frame);
 }
 
-start();
-void loadPosts();
+async function boot() {
+  if (import.meta.env.DEV && import.meta.env.MODE === 'playground') {
+    const { setupPlayground } = await import('./playground');
+    playground = setupPlayground(player, game, (enabled) => {
+      kingMode = enabled;
+      kingStatus.hidden = !enabled;
+      kingSizeButton.hidden = !enabled;
+      setKingScale(DEFAULT_KING_SCALE);
+    });
+    welcomeIdentity.hidden = true;
+    connectIdentity.hidden = true;
+    thread.hidden = true;
+    refresh.disabled = true;
+    element('welcome-copy').textContent = 'Explore with a sample Harbor feed.';
+    markNetwork('loading', 'PLAYGROUND', 'Waiting for the sample feed');
+  }
+  start();
+  void loadPosts();
+}
+
+void boot();
 
 window.setInterval(retryPlacements, 1500);
 document.addEventListener('visibilitychange', () => {

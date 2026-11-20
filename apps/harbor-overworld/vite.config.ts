@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
+import { playgroundFeed } from './server/playground.ts';
 import { attachPresence } from './server/presence.ts';
 
 // rs-core-wasm imports its .wasm as a URL and hands it to the loader. Vite
@@ -43,8 +44,13 @@ ${sdk}`,
 
 const multiplayer: Plugin = {
   name: 'overworld-multiplayer',
-  configureServer({ httpServer }) {
-    if (httpServer) attachPresence(httpServer);
+  configureServer({ httpServer, config }) {
+    if (httpServer)
+      attachPresence(
+        httpServer,
+        undefined,
+        config.mode === 'playground' ? playgroundFeed : undefined,
+      );
   },
   configurePreviewServer({ httpServer }) {
     attachPresence(httpServer);

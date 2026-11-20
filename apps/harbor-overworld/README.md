@@ -26,6 +26,29 @@ Open [http://127.0.0.1:4173/](http://127.0.0.1:4173/) in a browser.
 Live posts and identity pairing still use the Harbor production network.
 Press Ctrl+C in the terminal to stop the server.
 
+## Playground
+
+Run the [source setup](#build-from-source) once, then start Vite and the local
+room from the checkout root.
+
+```sh
+pnpm --filter harbor-overworld playground --open '/?scene=noticeboard'
+```
+
+Enter the world to read a sample post from the second feed page. Use the
+scene menu to spawn at the shoreline, a tree, or a ledge. Use **Replay** to run
+the same recorded inputs as the movement tests. The King checkbox enables
+local King controls and **K** cycles the size. Open **Join in another tab**
+and enter in both tabs to check remote player movement. The sample Like
+button stores its state in the current tab.
+
+```sh
+pnpm --filter harbor-overworld test:movement
+pnpm --filter harbor-overworld test:presence
+node --test --test-name-pattern=shoreline apps/harbor-overworld/src/world/movement.test.mjs
+node apps/harbor-overworld/scripts/check-live.mjs http://127.0.0.1:5173 --room-only
+```
+
 ## Test multiplayer locally
 
 Build the workspace dependencies and Overworld using the source commands
@@ -84,8 +107,8 @@ static files.
 
 ## Production multiplayer
 
-Use `overworld-site` and `overworld-presence` from the **same** successful
-Build Harbor Overworld Actions run. Serve the site as above. Extract the
+Use the site archive and presence ZIP from the **same** GitHub release or
+`overworld-release` Actions artifact. Serve the site as above. Extract the
 presence ZIP outside the web root and run `node server.mjs` under a service
 supervisor with Node 22. No package install is needed. Each process hosts
 one in-memory room; run one instance and keep TCP 8080 private.
@@ -108,6 +131,26 @@ reverse_proxy /presence 127.0.0.1:8080
 Forward the query string, upgrade headers, original Host and Origin. Clients
 connect through the site's HTTPS hostname, not directly to port 8080. Open
 two windows and confirm movement as in the local multiplayer check above.
+
+## Release workflow
+
+A push to the public fork's `overworld` branch builds and tests once, then
+publishes the packaged artifacts. A manually dispatched build produces the
+same archives for inspection. The host can continue fetching the latest
+published release.
+
+For immediate rollout, set the Actions repository variable
+`OVERWORLD_DEPLOY_URL` to your deploy receiver's HTTPS URL and store its
+bearer token in `OVERWORLD_DEPLOY_TOKEN`. The receiver gets a POST with the
+release tag in `X-Overworld-Release` and the contents of `build.json`. Handle
+retries by commit SHA. Download both archives by tag and switch the static
+directory only after extraction succeeds. Retain the prior directory and
+server bundle for rollback. Compare the new manifest's `presenceSha256` to
+the installed bundle's SHA-256 and restart presence only when it changes.
+
+The verification job checks the live `/build.json` commit and then joins two
+clients to confirm they see the same room and receive populated noticeboards.
+Set `OVERWORLD_SITE` if the live hostname changes.
 
 ## Build from source
 
