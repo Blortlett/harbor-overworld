@@ -22,6 +22,7 @@ test('standalone bundle serves health and relays movement between players', {
   );
   const server = spawn(process.execPath, ['server.mjs'], {
     cwd: dir,
+    env: { ...process.env, OVERWORLD_PLOTS_FILE: join(dir, 'plots.json') },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   const exited = once(server, 'exit');

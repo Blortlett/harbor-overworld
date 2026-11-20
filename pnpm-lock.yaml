@@ -543,6 +543,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/rs-core-wasm
     devDependencies:
+      '@protobuf-ts/grpcweb-transport':
+        specifier: ^2.11.1
+        version: 2.11.1
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6

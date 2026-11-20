@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PRESENCE_PATH } from '../src/world/presence-protocol.ts';
 import { attachPresence } from './presence.ts';
 
@@ -11,7 +13,10 @@ const http = createServer((request, response) => {
 http.on('upgrade', (request, socket) => {
   if (request.url?.split('?')[0] !== PRESENCE_PATH) socket.destroy();
 });
-attachPresence(http);
+attachPresence(
+  http,
+  process.env.OVERWORLD_PLOTS_FILE ?? join(tmpdir(), 'overworld-plots.json'),
+);
 http.listen(8080, '0.0.0.0', () =>
   console.log('Presence listening on 0.0.0.0:8080'),
 );

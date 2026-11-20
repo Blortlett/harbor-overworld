@@ -5,6 +5,7 @@ import {
   PRESENCE_INTERVAL,
   PRESENCE_PATH,
   type NamedPose,
+  type PlotSnapshot,
   type Pose,
   type ChatPost,
   readChat,
@@ -46,6 +47,7 @@ export function createPresence(
   readPose: () => NamedPose,
   onJoin: (slot: number) => void,
   onStatus: (label: string) => void,
+  onPlots: (snapshot: PlotSnapshot) => void,
 ) {
   const session = Array.from(
     crypto.getRandomValues(new Uint8Array(16)),
@@ -122,6 +124,23 @@ export function createPresence(
           () => sendPose(connection),
           PRESENCE_INTERVAL,
         );
+        return;
+      }
+
+      if (
+        message.type === 'plots' &&
+        'day' in message &&
+        typeof message.day === 'string' &&
+        'papers' in message &&
+        Array.isArray(message.papers)
+      ) {
+        onPlots({
+          type: 'plots',
+          day: message.day,
+          papers: message.papers.filter(
+            (paper): paper is string => typeof paper === 'string',
+          ),
+        });
         return;
       }
 

@@ -34,7 +34,7 @@ export function readChat(value: unknown): ChatPost | undefined {
     id,
     text:
       preview.length > 140
-        ? preview.slice(0, 139).join('') + '…'
+        ? `${preview.slice(0, 139).join('')}…`
         : preview.join(''),
   };
 }
@@ -48,7 +48,10 @@ export function displayName(value: unknown) {
   );
 }
 
+export type PlotSnapshot = { type: 'plots'; day: string; papers: string[] };
+
 export type PresenceMessage =
+  | PlotSnapshot
   | { type: 'welcome'; id: number; slot: number }
   | { type: 'players'; players: Player[] };
 

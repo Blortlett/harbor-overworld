@@ -1,5 +1,6 @@
 import {
   bytesToHex,
+  v2,
   SyncStrategy,
   type PolycentricClient,
   type ServerPushResult,
@@ -8,7 +9,7 @@ import { getClient, HARBOR_PRODUCTION_SERVERS } from '../client/client';
 import { createPost, MAX_POST_LENGTH } from '../data/compose';
 import { loadExplorePage } from '../data/feed';
 import { createIdentity, latestLocalProfile } from '../data/identity';
-import { eventKeyFromId, type PostData } from '../data/posts';
+import { decodePostBundle, eventKeyFromId, type PostData } from '../data/posts';
 import { coatIndex, COATS, nameplate } from './avatar';
 import { bindIdentityDialog } from './connect';
 import { PostNotice } from './notice';
@@ -92,6 +93,7 @@ const presence = createPresence(
     roomStatus.hidden = false;
     roomStatus.textContent = label;
   },
+  updatePlots,
 );
 let renderer: ReturnType<typeof createRenderer> | undefined;
 let entered = false;
@@ -106,9 +108,48 @@ let toastTimer = 0;
 let resumePointer = false;
 let resumeChat = false;
 let haveFeed = false;
+let plotsDay: string | undefined;
 const feedStartedAt = Date.now();
 const seenPosts = new Set<string>();
 const drops: FallingPost[] = [];
+
+function setNotices(posts: readonly PostData[]) {
+  const byId = new Map(notices.map((notice) => [notice.post.id, notice]));
+  notices = posts.map(
+    (post) => byId.get(post.id) ?? new PostNotice(post, updateNotice),
+  );
+  renderer?.setStations(notices.map((notice) => notice.canvas));
+}
+
+function updatePlots({ day, papers }: { day: string; papers: string[] }) {
+  const posts = papers.slice(0, STATIONS.length).flatMap((paper) => {
+    try {
+      const bundle = v2.EventBundle.fromBinary(
+        Uint8Array.from(atob(paper), (char) => char.charCodeAt(0)),
+      );
+      const post = decodePostBundle(bundle);
+      return post ? [post] : [];
+    } catch {
+      return [];
+    }
+  });
+  const existing = new Set(notices.map((notice) => notice.post.id));
+  const firstSnapshot = !plotsDay;
+  if (plotsDay && plotsDay !== day) drops.length = 0;
+  plotsDay = day;
+  setNotices(posts);
+  if (firstSnapshot) return;
+  for (const [index, notice] of notices.entries()) {
+    if (existing.has(notice.post.id)) continue;
+    const [x, z, sideways] = STATIONS[index];
+    dropPost(
+      notice.post.id,
+      notice.canvas,
+      x + (sideways ? 1.6 : 0),
+      z + (sideways ? 0 : 1.6),
+    );
+  }
+}
 
 function dropPost(
   id: string,
@@ -203,11 +244,7 @@ async function loadPosts() {
     const posts = [
       ...new Map(page.items.map((post) => [post.id, post])).values(),
     ].slice(0, STATIONS.length);
-    const byId = new Map(notices.map((notice) => [notice.post.id, notice]));
-    notices = posts.map(
-      (post) => byId.get(post.id) ?? new PostNotice(post, updateNotice),
-    );
-    renderer?.setStations(notices.map((notice) => notice.canvas));
+    if (!plotsDay) setNotices(posts);
     if (haveFeed && entered) {
       const fresh = posts.filter(
         (post) => post.createdAt >= feedStartedAt && !seenPosts.has(post.id),

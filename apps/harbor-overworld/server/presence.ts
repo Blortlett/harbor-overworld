@@ -13,6 +13,7 @@ import {
   readChat,
   ROOM_CAPACITY,
 } from '../src/world/presence-protocol.ts';
+import { createPlots } from './plots.ts';
 
 const IDLE_MS = 20_000;
 const MAX_QUEUED_BYTES = 64 * 1024;
@@ -37,10 +38,16 @@ function sameHost(request: IncomingMessage) {
   }
 }
 
-export function attachPresence(http: HttpServer) {
+export function attachPresence(http: HttpServer, plotsFile?: string) {
   const server = new WebSocketServer({ noServer: true, maxPayload: 1536 });
   const clients = new Map<string, Client>();
   let nextId = 1;
+
+  const plots = createPlots(plotsFile, (snapshot) => {
+    const message = JSON.stringify(snapshot);
+    for (const { ws } of clients.values())
+      if (ws.readyState === WebSocket.OPEN) ws.send(message);
+  });
 
   function upgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
     const [path, query] = (request.url ?? '').split('?');
@@ -106,6 +113,8 @@ export function attachPresence(http: HttpServer) {
         slot: client.slot,
       };
       ws.send(JSON.stringify(welcome));
+      const plotState = plots.snapshot();
+      if (plotState) ws.send(JSON.stringify(plotState));
     });
   }
 
@@ -136,6 +145,7 @@ export function attachPresence(http: HttpServer) {
 
   http.once('close', () => {
     clearInterval(timer);
+    plots.close();
     http.off('upgrade', upgrade);
     for (const { ws } of clients.values()) ws.terminate();
     clients.clear();

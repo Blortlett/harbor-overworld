@@ -36,6 +36,13 @@ Open `http://127.0.0.1:4173/` in two desktop browser windows and select
 Walk in one window to see its avatar move in the other. Everyone who enters
 the same preview joins one room of up to 24 players.
 
+The presence server assigns today’s production posts to 16 shared plots.
+An occupied noticeboard keeps its post until the next 3 a.m. Central reset.
+After all plots fill, newer posts still fall into the world as temporary cards.
+The standalone server saves plots to a temporary file by default. Set
+`OVERWORLD_PLOTS_FILE` to a writable path on a persistent volume to retain
+the arrangement across container replacements.
+
 ## Deploy the release on your hardware
 
 1. Download [harbor-overworld.tar.gz](https://github.com/SomewhatJustin/harbor-overworld/releases/latest/download/harbor-overworld.tar.gz).
