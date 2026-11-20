@@ -56,7 +56,6 @@ export function createPresence(
   getKingProof: (
     nonce: string,
   ) => Promise<{ key: string; proof: string } | undefined>,
-  onKing: (enabled: boolean) => void,
 ) {
   const session = Array.from(
     crypto.getRandomValues(new Uint8Array(16)),
@@ -151,7 +150,9 @@ export function createPresence(
         available = true;
         status('1 player online');
         sendPose(connection);
-        void proveKing();
+        void proveKing().catch((error) =>
+          console.warn('Could not verify King Mode:', error),
+        );
         sendTimer = window.setInterval(
           () => sendPose(connection),
           PRESENCE_INTERVAL,
@@ -173,15 +174,6 @@ export function createPresence(
         });
         return;
       }
-      if (
-        message.type === 'king' &&
-        'enabled' in message &&
-        typeof message.enabled === 'boolean'
-      ) {
-        onKing(message.enabled);
-        return;
-      }
-
       if (
         message.type === 'plots' &&
         'day' in message &&
@@ -258,7 +250,6 @@ export function createPresence(
     socket = undefined;
     id = undefined;
     nonce = undefined;
-    onKing(false);
     clearInterval(sendTimer);
     clearTimeout(reconnectTimer);
     tracks.clear();

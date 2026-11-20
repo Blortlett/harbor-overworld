@@ -1,4 +1,11 @@
-import { avatarMesh, coatIndex, COATS, crownMesh, nameplate } from './avatar';
+import {
+  avatarMesh,
+  coatIndex,
+  COATS,
+  crownMesh,
+  KING_AVATAR_SCALE,
+  nameplate,
+} from './avatar';
 import type { Avatar } from './presence';
 import {
   ground,
@@ -436,7 +443,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
 
       const visible = avatars.filter(
         ({ x, z, king }) =>
-          Math.hypot(x - view.x, z - view.z) >= (king ? 1.1 : 0.55),
+          Math.hypot(x - view.x, z - view.z) >=
+          0.55 * (king ? KING_AVATAR_SCALE : 1),
       );
       if (visible.length) {
         gl.useProgram(avatarProgram);
@@ -446,7 +454,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         for (const avatar of visible) {
           const model = avatarMeshes[coatIndex(avatar.id)];
           gl.uniform3f(avatarOrigin, avatar.x, avatar.y, avatar.z);
-          gl.uniform1f(avatarScale, avatar.king ? 2 : 1);
+          gl.uniform1f(avatarScale, avatar.king ? KING_AVATAR_SCALE : 1);
           gl.uniform2f(
             avatarRotation,
             Math.cos(avatar.yaw),

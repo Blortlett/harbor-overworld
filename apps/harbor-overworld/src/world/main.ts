@@ -10,7 +10,7 @@ import { createPost, MAX_POST_LENGTH } from '../data/compose';
 import { loadExplorePage } from '../data/feed';
 import { createIdentity, latestLocalProfile } from '../data/identity';
 import { decodePostBundle, eventKeyFromId, type PostData } from '../data/posts';
-import { coatIndex, COATS } from './avatar';
+import { coatIndex, COATS, KING_AVATAR_SCALE } from './avatar';
 import { bindIdentityDialog } from './connect';
 import { bindMobileControls } from './mobile';
 import { PostNotice } from './notice';
@@ -82,6 +82,7 @@ const movement = [
 ];
 const view = spawnView();
 const roomStatus = element('room-status');
+const kingStatus = element('king-status');
 const welcomeIdentity = element<HTMLFormElement>('welcome-identity');
 const welcomeName = element<HTMLInputElement>('welcome-name');
 const welcomeError = element('welcome-error');
@@ -127,10 +128,6 @@ const presence = createPresence(
       key: bytesToHex(pair.publicKey.key),
       proof: bytesToHex(signature),
     };
-  },
-  (enabled) => {
-    kingMode = enabled && client?.activeIdentityKey === KING_IDENTITY;
-    if (kingMode) announce('King Mode enabled');
   },
 );
 const mobile = bindMobileControls(game, world, {
@@ -330,7 +327,11 @@ draft.maxLength = MAX_POST_LENGTH;
 function updateAvatarName(activeClient: PolycentricClient) {
   const identity = activeClient.activeIdentityKey;
   welcomeIdentity.hidden = !!identity;
-  if (identity !== KING_IDENTITY) kingMode = false;
+  connectIdentity.textContent = identity
+    ? 'Switch Harbor identity'
+    : 'Connect Harbor identity';
+  kingMode = identity === KING_IDENTITY && !!activeClient.currentKeyPair;
+  kingStatus.hidden = !kingMode;
   void presence
     .proveKing()
     .catch((error) => console.warn('Could not verify King Mode:', error));
@@ -378,7 +379,6 @@ async function loadPosts() {
   try {
     client = await getClient();
     updateAvatarName(client);
-    connectIdentity.hidden = !!client.activeIdentityKey;
     const page = await loadExplorePage(client, 'latest', undefined, {
       servers: HARBOR_PRODUCTION_SERVERS,
       includeLocal: false,
@@ -646,7 +646,6 @@ identityForm.addEventListener('submit', async (event) => {
   try {
     await createIdentity(client, name);
     updateAvatarName(client);
-    connectIdentity.hidden = true;
     report(`Posting as ${name}`);
   } catch (error) {
     console.error('Could not create a Harbor identity:', error);
@@ -694,7 +693,6 @@ function openIdentity() {
 bindIdentityDialog(connectPanel, (connectedClient) => {
   client = connectedClient;
   updateAvatarName(connectedClient);
-  connectIdentity.hidden = true;
   closePanel(connectPanel, false);
   if (resumeChat) void openChat(replyTo);
   else announce('Harbor identity connected.');
@@ -719,7 +717,6 @@ async function enterFromWelcome() {
     client = await getClient();
     if (!client.activeIdentityKey) await createIdentity(client, name);
     updateAvatarName(client);
-    connectIdentity.hidden = true;
     enter(false);
   } catch (error) {
     console.error('Could not create a Harbor identity:', error);
@@ -982,7 +979,8 @@ function start() {
     jump = jumpHeight(time);
     if (airborne && time > airborne.startedAt && jump === 0)
       airborne = undefined;
-    const camera = { ...view, y: view.y + jump };
+    const extraEyeHeight = kingMode ? EYE_HEIGHT * (KING_AVATAR_SCALE - 1) : 0;
+    const camera = { ...view, y: view.y + extraEyeHeight + jump };
     const seconds = time / 1000;
     const noticeIndex = exploring ? facingNotice(camera, notices.length) : -1;
     focusNotice(

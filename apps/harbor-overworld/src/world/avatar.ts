@@ -1,5 +1,7 @@
 import { type Color, Mesh } from './terrain';
 
+export const KING_AVATAR_SCALE = 2;
+
 export const COATS: readonly Color[] = [
   [0.21, 0.57, 0.62],
   [0.81, 0.38, 0.24],
