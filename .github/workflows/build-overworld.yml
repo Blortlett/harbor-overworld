@@ -2,7 +2,7 @@ name: Build Harbor Overworld
 
 on:
   push:
-    branches: [overworld]
+    branches: [ overworld ]
   workflow_dispatch:
 
 permissions:
@@ -47,8 +47,21 @@ jobs:
           test -s index.html && test -s licenses.txt
           compgen -G 'assets/*.wasm' > /dev/null
           compgen -G 'assets/*.js' > /dev/null
+      - name: Bundle presence server
+        run: pnpm --filter harbor-overworld build:presence
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Test standalone presence on Node 22
+        run: node --test apps/harbor-overworld/server/presence.test.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: overworld-site
           path: apps/harbor-overworld/dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: overworld-presence
+          path: apps/harbor-overworld/dist-presence/server.mjs
           if-no-files-found: error

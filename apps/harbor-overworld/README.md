@@ -69,6 +69,26 @@ The browser saves the connected identity for this hostname. All Harbor traffic
 goes directly from the browser to the production network. The host serves only
 static files.
 
+## Production multiplayer
+
+Use `overworld-site` and `overworld-presence` from the **same** successful
+Build Harbor Overworld Actions run. Serve the site as above. Extract the
+presence ZIP outside the web root and run `node server.mjs` under a service
+supervisor with Node 22. No package install is needed. Each process hosts
+one in-memory room; run one instance and keep TCP 8080 private.
+
+The server listens on `0.0.0.0:8080`. Check it locally with
+`curl -fsS http://127.0.0.1:8080/healthz`. Add this directive inside the
+site's Caddy block (or use the equivalent WebSocket proxy on your server):
+
+```caddyfile
+reverse_proxy /presence 127.0.0.1:8080
+```
+
+Forward the query string, upgrade headers, original Host and Origin. Clients
+connect through the site's HTTPS hostname, not directly to port 8080. Open
+two windows and confirm movement as in the local multiplayer check above.
+
 ## Build from source
 
 Use the repository's Node and pnpm versions and the

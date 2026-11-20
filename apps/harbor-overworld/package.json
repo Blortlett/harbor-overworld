@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:presence": "node server/build.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
@@ -16,9 +17,10 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
     "typescript": "catalog:",
     "vite": "8.3.8",
-    "@types/ws": "8.18.1",
     "ws": "8.23.0"
   }
 }
