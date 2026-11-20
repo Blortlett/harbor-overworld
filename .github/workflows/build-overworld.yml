@@ -28,6 +28,8 @@ jobs:
       - name: Identify build cache inputs
         id: cache-keys
         env:
+          # The shared lockfile is intentionally conservative: dependency changes
+          # invalidate these caches, but edits to game source or CI do not.
           JS_INPUTS: ${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'patches/**') }}
           WASM_INPUTS: ${{ hashFiles('**/Cargo.toml', 'Cargo.lock', '**/.cargo/**', 'rust-toolchain*', 'packages/rs-core/**', 'packages/rs-common/**', 'packages/rs-core-wasm/**', 'protos/**', 'apps/harbor-overworld/scripts/install-wasm-tools.sh') }}
           SDK_INPUTS: ${{ hashFiles('packages/js-core/**', 'packages/js-browser/**', 'tools/tsconfig/**', 'buf.yaml', 'buf.gen.yaml', 'buf.lock') }}
