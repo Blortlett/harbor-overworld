@@ -111,7 +111,8 @@ export function bindSeaplane(
   button.append(shortcut, label);
   const hint = document.createElement('span');
   hint.className = 'plane-hint plate';
-  hint.textContent = 'W/S throttle · A/D steer · ↑/↓ climb or descend';
+  hint.textContent =
+    'W accelerate · S brake · A/D steer · ↑/↓ climb or descend';
   const metrics = document.createElement('span');
   metrics.className = 'plane-metrics plate';
   const touchPitch = document.createElement('div');
@@ -195,7 +196,7 @@ export function bindSeaplane(
     if (label.textContent !== action) label.textContent = action;
     if (aboard) {
       const altitude = Math.round(flight.pose.y - WATER);
-      const summary = `Throttle ${Math.round(flight.throttle * 100)}% · Altitude ${altitude}`;
+      const summary = `Speed ${Math.round(flight.speed)} · Altitude ${altitude}`;
       if (metrics.textContent !== summary) metrics.textContent = summary;
     }
   }
@@ -265,9 +266,10 @@ export function bindSeaplane(
         },
         obstacles,
       );
-      if (!next) {
+      if ('crash' in next) {
+        const { x, y, z, yaw } = next.crash;
         reset();
-        player.reset({ ...view, pitch: 0 });
+        player.reset({ x, y: y + CABIN_FLOOR + EYE_HEIGHT, z, yaw, pitch: 0 });
         announce('You crashed. :(');
       } else {
         flight = next;

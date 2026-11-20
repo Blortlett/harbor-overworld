@@ -3,7 +3,7 @@ import { MAX_X, MAX_Z, MIN_X, MIN_Z } from './terrain.ts';
 
 export const PRESENCE_PATH = '/presence';
 export const PRESENCE_INTERVAL = 100;
-export const ROOM_CAPACITY = 24;
+export const ROOM_CAPACITY = 32;
 export const OVERWORLD_APPLICATION = 'how.justin.harbor-overworld';
 export const POST_LIFETIME_MS = 60_000;
 export const CROWN_DURATION = 60_000;

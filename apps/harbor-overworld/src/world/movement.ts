@@ -126,7 +126,7 @@ export function createPlayerMovement(initialView = spawnView()) {
 
 export function spawnView(slot = 0): View {
   const rows = [SPAWN.z, 14.2, 20.7, 11.5, 23.7, 26.7, 29.1, 32.3];
-  const x = SPAWN.x + [0, -1.8, 1.8][Math.floor(slot / rows.length)];
+  const x = SPAWN.x + [0, -1.8, 1.8, -3.6][Math.floor(slot / rows.length)];
   const z = rows[slot % rows.length];
   return { x, y: ground(x, z) + EYE_HEIGHT, z, yaw: 0.075, pitch: -0.075 };
 }

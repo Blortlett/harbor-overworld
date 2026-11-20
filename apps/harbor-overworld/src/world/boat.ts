@@ -133,7 +133,7 @@ export function bindBoat(
   action.addEventListener('click', onToggle);
   const hint = document.createElement('span');
   hint.className = 'boat-hint plate';
-  hint.textContent = 'W/S throttle · A/D steer';
+  hint.textContent = 'W accelerate · S reverse · A/D steer';
   hint.hidden = true;
   panel.append(action, hint);
   game.append(panel);
@@ -224,24 +224,27 @@ export function bindBoat(
 
       const throttle = Math.max(-1, Math.min(1, input.forward));
       const steering = Math.max(-1, Math.min(1, input.sideways + input.turn));
-      const targetSpeed = throttle * (throttle < 0 ? 3.3 : 8);
-      speed += (targetSpeed - speed) * Math.min(1, dt * 2.8);
+      speed = throttle
+        ? speed + throttle * (throttle < 0 ? 12 : 9) * dt
+        : speed * Math.exp(-2 * dt);
       const turn = steering * dt * 1.75;
       const yaw = pose.yaw + turn;
-      const nextPose = {
-        x: pose.x + Math.sin(yaw) * speed * dt,
-        z: pose.z - Math.cos(yaw) * speed * dt,
-        yaw,
-      };
-      let viewTurn = turn;
-      if (canFloat(nextPose)) pose = nextPose;
-      else {
-        speed = 0;
-        if (canFloat({ ...pose, yaw })) pose = { ...pose, yaw };
-        else viewTurn = 0;
+      const steps = Math.max(1, Math.ceil((Math.abs(speed) * dt) / 0.2));
+      const stride = (speed * dt) / steps;
+      const dx = Math.sin(yaw) * stride;
+      const dz = -Math.cos(yaw) * stride;
+      const previousYaw = pose.yaw;
+      for (let step = 0; step < steps; step++) {
+        const next = { x: pose.x + dx, z: pose.z + dz, yaw };
+        if (!canFloat(next)) {
+          speed = 0;
+          if (canFloat({ ...pose, yaw })) pose = { ...pose, yaw };
+          break;
+        }
+        pose = next;
       }
       player.look(0, input.look * dt);
-      syncView(view.yaw + viewTurn);
+      syncView(view.yaw + pose.yaw - previousYaw);
       return true;
     },
   };

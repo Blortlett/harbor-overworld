@@ -11,13 +11,14 @@ drag the scene to look, and tap Jump or Chat. The fullscreen button appears
 when your browser supports fullscreen.
 
 Follow the coast east of the spawn point to find the dock. Press **F** or tap
-**Board boat** to get aboard. Use **W/S** for throttle and **A/D** to steer,
-or use the touch joystick. Press **F** or tap **Leave boat** to get out.
+**Board boat** to get aboard. Hold **W** to accelerate, use **S** to brake
+and reverse, and steer with **A/D**. The touch joystick does the same.
+Press **F** or tap **Leave boat** to get out.
 
 The seaplane is moored on the other side of the dock. Press **G** or tap
 **Board seaplane**. Hold **W** and **↑** to take off, use **A/D** to turn,
-and use **↓** to descend toward open water. Press **S** to slow down and
-**G** to leave once stopped. On touchscreens, use the joystick for throttle
+and use **↓** to descend toward open water. Keep holding **W** to accelerate,
+use **S** to slow down, and press **G** to leave once stopped. On touchscreens, use the joystick for throttle
 and steering, and hold **Climb** or **Descend** for pitch.
 
 Follow the gold beacon and walk into the crown to become King for one
@@ -113,7 +114,7 @@ pnpm --filter harbor-overworld preview --host 127.0.0.1 --port 4173 --strictPort
 Open `http://127.0.0.1:4173/` in two desktop browser windows and select
 **Enter world** in both. Both windows should show **2 players online**.
 Walk in one window to see its avatar move in the other. Everyone who enters
-the same preview joins one room of up to 24 players.
+the same preview joins one room of up to 32 players.
 
 The presence server keeps up to 16 production posts on shared noticeboards,
 which clear at 3 a.m. Central. Posts made in Overworld stay at their landing

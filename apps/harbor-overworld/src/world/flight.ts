@@ -49,7 +49,8 @@ const CONTACT_POINTS = [
   [0, 2.6, 0.9, 1.9],
 ] as const;
 const TAKEOFF_SPEED = 9;
-const CRUISE_SPEED = 21;
+const ACCELERATION = 13;
+const BRAKING = 20;
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
@@ -92,15 +93,13 @@ export function fly(
   dt: number,
   { forward, steer, climb }: { forward: number; steer: number; climb: number },
   obstacles: readonly Obstacle[],
-) {
-  const throttle = clamp(
-    state.throttle + clamp(forward, -1, 1) * dt * 0.74,
+): Flight | { crash: PlanePose } {
+  const thrust = clamp(forward, -1, 1);
+  const throttle = Math.max(0, thrust);
+  const speed = Math.max(
     0,
-    1,
+    state.speed + thrust * (thrust < 0 ? BRAKING : ACCELERATION) * dt,
   );
-  const speed =
-    state.speed +
-    (throttle * CRUISE_SPEED - state.speed) * Math.min(1, dt * 2.3);
   const airborne = state.airborne || (climb > 0.2 && speed >= TAKEOFF_SPEED);
   const targetPitch = airborne ? clamp(climb, -1, 1) * 0.42 : 0;
   const pitch =
@@ -120,22 +119,37 @@ export function fly(
     yaw,
   };
 
-  if (clearOfTerrain(pose, obstacles)) {
-    const flying = y > WATER;
-    return {
-      pose,
-      speed,
-      throttle,
-      airborne: flying,
-    };
-  }
-
-  if (state.airborne) return undefined;
-  const turned = { ...state.pose, yaw };
-  return {
-    pose: clearOfTerrain(turned, obstacles) ? turned : state.pose,
-    throttle: 0,
-    speed: 0,
-    airborne: false,
+  const start = state.pose;
+  const delta = {
+    x: pose.x - start.x,
+    y: pose.y - start.y,
+    z: pose.z - start.z,
   };
+  const steps = Math.max(
+    1,
+    Math.ceil(Math.hypot(delta.x, delta.y, delta.z) / 0.2),
+  );
+  let clear = start;
+  for (let step = 1; step <= steps; step++) {
+    const fraction = step / steps;
+    const point = {
+      x: start.x + delta.x * fraction,
+      y: start.y + delta.y * fraction,
+      z: start.z + delta.z * fraction,
+      yaw: start.yaw + (pose.yaw - start.yaw) * fraction,
+      pitch: start.pitch + (pose.pitch - start.pitch) * fraction,
+    };
+    if (!clearOfTerrain(point, obstacles)) {
+      if (state.airborne) return { crash: clear };
+      const turned = { ...clear, yaw };
+      return {
+        pose: clearOfTerrain(turned, obstacles) ? turned : clear,
+        throttle: 0,
+        speed: 0,
+        airborne: false,
+      };
+    }
+    clear = point;
+  }
+  return { pose, speed, throttle, airborne: y > WATER };
 }
