@@ -31,6 +31,7 @@ type MovementInput = {
   turn?: number;
   look?: number;
   ascend?: boolean;
+  sprint?: boolean;
 };
 export type CollisionScene = {
   obstacles: readonly Obstacle[];
@@ -147,7 +148,7 @@ function obstaclePenetration(obstacle: Obstacle, x: number, z: number) {
 
 function walk(
   view: View,
-  { forward, sideways }: MovementInput,
+  { forward, sideways, sprint }: MovementInput,
   dt: number,
   obstacles: readonly Obstacle[],
   stations: number,
@@ -223,8 +224,12 @@ function walk(
       (Math.sin(view.yaw) * forward + Math.cos(view.yaw) * sideways) * speed;
     const dz =
       (-Math.cos(view.yaw) * forward + Math.sin(view.yaw) * sideways) * speed;
-    if (dx && clear(view.x + dx, view.z)) view.x += dx;
-    if (dz && clear(view.x, view.z + dz)) view.z += dz;
+    // Check each sprint increment at walking speed to avoid skipping obstacles.
+    const steps = sprint ? 8 : 1;
+    for (let step = 0; step < steps; step++) {
+      if (dx && clear(view.x + dx, view.z)) view.x += dx;
+      if (dz && clear(view.x, view.z + dz)) view.z += dz;
+    }
   }
   let floor = Math.max(WATER - 0.5, ground(view.x, view.z));
   for (const { top } of obstaclesAt(view.x, view.z)) {

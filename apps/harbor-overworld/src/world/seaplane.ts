@@ -1,4 +1,4 @@
-import { fly, parkedPlane, planeOffset, SEAPLANE_BOARDING } from './flight';
+import { fly, parkedPlane, planeOffset } from './flight';
 import { type createPlayerMovement, EYE_HEIGHT, type View } from './movement';
 import {
   type Color,
@@ -267,8 +267,7 @@ export function bindSeaplane(
       );
       if (!next) {
         reset();
-        const { x, z, floor } = SEAPLANE_BOARDING;
-        player.reset({ x, z, y: floor + EYE_HEIGHT, yaw: 0, pitch: 0 });
+        player.reset({ ...view, pitch: 0 });
         announce('You crashed. :(');
       } else {
         flight = next;

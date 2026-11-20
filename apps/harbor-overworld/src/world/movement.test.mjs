@@ -37,6 +37,15 @@ test('king-ascent rises continuously while held and falls when released', () => 
   assert.equal(frames.at(-1).y, start);
 });
 
+test('king-sprint is eight times as fast and stops at a noticeboard', () => {
+  const scene = scenarios['king-sprint'];
+  const sprint = replay(scene);
+  const walk = replay({ ...scene, king: false });
+  assert.ok(Math.abs(scene.z - sprint[3].z - 8 * (scene.z - walk[3].z)) < 1e-9);
+  assert.ok(sprint.at(-1).z > scene.z - 5);
+  assert.equal(sprint.at(-1).z, sprint[30].z);
+});
+
 test('lighthouse clears the lighthouse footprint with chained King jumps', () => {
   const scene = scenarios.lighthouse;
   const frames = replay(scene);

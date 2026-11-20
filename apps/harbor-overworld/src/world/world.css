@@ -329,6 +329,17 @@ a {
 .crosshair.active {
   color: var(--gold);
 }
+.like-heart {
+  position: absolute;
+  z-index: 2;
+  inset: 50% auto auto 50%;
+  translate: -50% -50%;
+  pointer-events: none;
+  color: #ff6388;
+  font-size: 34px;
+  line-height: 1;
+  text-shadow: 0 2px 7px #2a121bdd;
+}
 #falling-posts {
   position: absolute;
   inset: max(104px, 19%) max(12px, var(--safe-right)) auto

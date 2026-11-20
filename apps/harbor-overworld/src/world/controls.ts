@@ -88,6 +88,7 @@ export const controlCommands = {
   ),
   jump: command('Jump.'),
   ascend: command('Hold or release King ascent.', toggle('held')),
+  sprint: command('Hold or release King sprint.', toggle('held')),
   shoot: command('Fire while wearing the crown.'),
   size: command('Cycle avatar size while wearing the crown.'),
   boat: command('Board or disembark from the boat.'),
@@ -162,12 +163,13 @@ export function parseControl(name: unknown, args: unknown) {
 }
 
 export function createControls(
-  actions: Omit<Handlers, 'move' | 'stop' | 'ascend'> & {
+  actions: Omit<Handlers, 'move' | 'stop' | 'ascend' | 'sprint'> & {
     beginMovement(): boolean;
   },
 ) {
   const inputs = new Map<InputSource, Movement & { until: number }>();
   const ascent = new Set<InputSource>();
+  const sprint = new Set<InputSource>();
 
   function from(source: InputSource): RunControl {
     const handlers: Handlers = {
@@ -175,6 +177,10 @@ export function createControls(
       ascend(held) {
         if (held) ascent.add(source);
         else ascent.delete(source);
+      },
+      sprint(held) {
+        if (held) sprint.add(source);
+        else sprint.delete(source);
       },
       move(forward, sideways, turn, look, duration) {
         if ((forward || sideways || turn || look) && actions.beginMovement())
@@ -204,6 +210,9 @@ export function createControls(
     get ascending() {
       return ascent.size > 0;
     },
+    get sprinting() {
+      return sprint.size > 0;
+    },
     run: from('keyboard'),
     dispatch(name: unknown, args: unknown) {
       const parsed = parseControl(name, args);
@@ -226,6 +235,7 @@ export function createControls(
     release() {
       inputs.clear();
       ascent.clear();
+      sprint.clear();
     },
   };
 }

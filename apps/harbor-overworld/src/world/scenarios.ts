@@ -12,6 +12,7 @@ type Segment = {
   sideways?: number;
   jump?: boolean;
   ascend?: boolean;
+  sprint?: boolean;
 };
 type Scenario = {
   label: string;
@@ -77,6 +78,14 @@ export const scenarios = {
     ...SPAWN,
     king: true,
     segments: [{ frames: 120, ascend: true }, { frames: 100 }],
+  },
+  'king-sprint': {
+    label: 'Sprint toward the noticeboard as King',
+    x: boardX,
+    z: boardZ + 5,
+    stations: 1,
+    king: true,
+    segments: [{ frames: 90, forward: 1, sprint: true }],
   },
   tree: {
     label: 'Escape a tree and walk back into it',
@@ -161,6 +170,7 @@ export function* replayScenario(
           forward: segment.forward ?? 0,
           sideways: segment.sideways ?? 0,
           ascend: scenario.king && segment.ascend,
+          sprint: scenario.king && segment.sprint,
         },
         scene,
       );

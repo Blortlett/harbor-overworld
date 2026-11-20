@@ -727,11 +727,43 @@ function updateLikeButton() {
   );
 }
 
+function showLikeHeart() {
+  const heart = document.createElement('span');
+  heart.className = 'like-heart';
+  heart.setAttribute('aria-hidden', 'true');
+  heart.textContent = '♥';
+  game.append(heart);
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const animation = heart.animate(
+    reduced
+      ? [{ opacity: 1 }, { opacity: 0 }]
+      : [
+          { transform: 'scale(.55)', opacity: 1, offset: 0 },
+          {
+            transform: 'translate(5px, -26px) scale(1.2)',
+            opacity: 1,
+            offset: 0.28,
+          },
+          {
+            transform: 'translate(23px, -112px) rotate(14deg) scale(.85)',
+            opacity: 0,
+          },
+        ],
+    { duration: reduced ? 350 : 800, easing: 'ease-out' },
+  );
+  const remove = () => heart.remove();
+  animation.onfinish = remove;
+  animation.oncancel = remove;
+}
+
 async function toggleLike() {
   const post = focusedNotice?.post;
   if (!post || busy) return;
   if (isPlayground) {
-    if (!playgroundLikes.delete(post.id)) playgroundLikes.add(post.id);
+    if (!playgroundLikes.delete(post.id)) {
+      playgroundLikes.add(post.id);
+      showLikeHeart();
+    }
     updateLikeButton();
     return;
   }
@@ -745,6 +777,7 @@ async function toggleLike() {
   try {
     const existing = findLike(activeClient, post.id);
     const { eventKey } = await setLike(activeClient, post.id, existing);
+    if (!existing) showLikeHeart();
     updateLikeButton();
     const sent = await publish(activeClient, eventKey, false);
     if (sent) announce(existing ? 'Like removed.' : 'Post liked.');
@@ -1090,6 +1123,7 @@ document.addEventListener('pointerlockchange', () => {
   keys.clear();
   controls.run('stop');
   controls.run('ascend', false);
+  controls.run('sprint', false);
 });
 
 function setKingScale(scale: KingScale) {
@@ -1227,6 +1261,11 @@ window.addEventListener('keydown', (event) => {
     }
     return;
   }
+  if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+    keys.add(event.code);
+    controls.run('sprint', true);
+    return;
+  }
   if (boat.available && event.code === 'KeyF') {
     event.preventDefault();
     if (!event.repeat) controls.run('boat');
@@ -1259,6 +1298,11 @@ window.addEventListener('keydown', (event) => {
 });
 window.addEventListener('keyup', (event) => {
   if (event.code === 'Space') controls.run('ascend', false);
+  if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+    keys.delete(event.code);
+    controls.run('sprint', keys.has('ShiftLeft') || keys.has('ShiftRight'));
+    return;
+  }
   if (event.code === 'KeyR') openingReply = false;
   if (keys.delete(event.code)) moveWithKeys();
 });
@@ -1431,7 +1475,11 @@ function start() {
       stationCount: notices.length,
     };
     const movementInput = exploring
-      ? { ...controls.movement(time), ascend: kingMode && controls.ascending }
+      ? {
+          ...controls.movement(time),
+          ascend: kingMode && controls.ascending,
+          sprint: kingMode && controls.sprinting,
+        }
       : undefined;
     const flying = plane.step(dt, movementInput, collisions.obstacles);
     const boating = boat.step(dt, movementInput);
