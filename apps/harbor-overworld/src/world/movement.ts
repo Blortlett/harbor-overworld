@@ -20,14 +20,17 @@ export type View = {
   pitch: number;
 };
 export const EYE_HEIGHT = 1.64;
+export const MAX_PITCH = 1.31;
 const GRAVITY = 33;
 const JUMP_SPEED = 8.2;
+const ASCENT_SPEED = 5.5;
 
 type MovementInput = {
   forward: number;
   sideways: number;
   turn?: number;
   look?: number;
+  ascend?: boolean;
 };
 export type CollisionScene = {
   obstacles: readonly Obstacle[];
@@ -53,7 +56,7 @@ export function createPlayerMovement(initialView = spawnView()) {
 
   function look(yaw: number, pitch: number) {
     view.yaw += yaw;
-    view.pitch = Math.max(-1.31, Math.min(1.31, view.pitch + pitch));
+    view.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, view.pitch + pitch));
   }
 
   return {
@@ -78,7 +81,13 @@ export function createPlayerMovement(initialView = spawnView()) {
       input: MovementInput | undefined,
       scene: CollisionScene,
     ) {
-      const jumpFeet = airborne ? jumpHeight(time) : undefined;
+      const previousFeet = view.y - EYE_HEIGHT;
+      const rising = input?.ascend === true;
+      const jumpFeet = rising
+        ? Math.min(80 - EYE_HEIGHT, previousFeet + ASCENT_SPEED * dt)
+        : airborne
+          ? jumpHeight(time)
+          : undefined;
       let feet = jumpFeet;
       if (input) {
         look((input.turn ?? 0) * dt * 1.6, (input.look ?? 0) * dt);
@@ -89,12 +98,20 @@ export function createPlayerMovement(initialView = spawnView()) {
           scene.obstacles,
           scene.stationCount,
           jumpFeet,
-          airborne ? view.y - EYE_HEIGHT : floor,
+          airborne || rising ? previousFeet : floor,
         );
-        floor = contact.floor;
         feet = contact.feet;
+        if (!airborne && !rising && floor - contact.floor > 1) {
+          feet = view.y - EYE_HEIGHT;
+          airborne = { height: feet, startedAt: time, speed: 0 };
+        }
+        floor = contact.floor;
       }
-      if (airborne && feet !== undefined) {
+      if (rising && feet !== undefined) {
+        const height = Math.max(floor, feet);
+        view.y = height + EYE_HEIGHT;
+        airborne = { height, startedAt: time, speed: 0 };
+      } else if (airborne && feet !== undefined) {
         view.y = Math.max(floor, feet) + EYE_HEIGHT;
         if (time > airborne.startedAt && feet <= floor) airborne = undefined;
         else if (jumpFeet !== undefined && feet < jumpFeet)
@@ -181,8 +198,6 @@ function walk(
     const terrainLimit =
       airborneFeet === undefined ? Math.max(current, feet, WATER) + 1 : feet;
     if (next > terrainLimit) return false;
-    if (airborneFeet === undefined && next > WATER && next < current - 2)
-      return false;
     for (const [ox, oz] of FOOTPRINT) {
       const edge = ground(x + ox, z + oz);
       if (edge > terrainLimit && edge > ground(view.x + ox, view.z + oz))

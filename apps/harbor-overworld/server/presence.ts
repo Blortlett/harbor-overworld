@@ -1,27 +1,44 @@
-import { randomBytes } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { HttpServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
+import { createCrown } from '../src/world/crown.ts';
+import { EYE_HEIGHT, spawnView } from '../src/world/movement.ts';
 import {
   displayName,
+  HIT_LINES,
   isPlacement,
   isPose,
-  isProof,
+  isShoot,
   parseMessage,
   PRESENCE_INTERVAL,
   PRESENCE_PATH,
   type NamedPose,
+  type Player,
   type PresenceMessage,
   readChat,
   readKingScale,
   ROOM_CAPACITY,
+  SHOT_INTERVAL,
+  type Shoot,
 } from '../src/world/presence-protocol.ts';
-import { verifyKing } from './king.ts';
+import { ground, makeTerrain, type Obstacle } from '../src/world/terrain.ts';
 import { createPlots, type PlotFeed } from './plots.ts';
+import { traceShot } from './shots.ts';
 
 const IDLE_MS = 20_000;
 const MAX_QUEUED_BYTES = 64 * 1024;
+const PRACTICE_ID = Number.MAX_SAFE_INTEGER;
+const PRACTICE_CROWN_SITES = [
+  { x: 0.5, z: 15.5 },
+  { x: -3.5, z: 14.5 },
+  { x: 4.5, z: 18.5 },
+];
+const PRACTICE_TARGET_SITES = [
+  { x: 0.5, z: 9.9 },
+  { x: -2.5, z: 11.5 },
+  { x: 3.5, z: 11.5 },
+];
 
 type Client = {
   ws: WebSocket;
@@ -30,8 +47,9 @@ type Client = {
   pose?: NamedPose;
   updatedAt: number;
   nextPlacement: number;
-  nextProof: number;
-  proof?: string;
+  nextShot: number;
+  spawnRevision: number;
+  respawnPending?: true;
 };
 
 function sameHost(request: IncomingMessage) {
@@ -50,11 +68,27 @@ export function attachPresence(
   http: HttpServer,
   plotsFile?: string,
   feed?: PlotFeed,
+  practice = false,
 ) {
   const server = new WebSocketServer({ noServer: true, maxPayload: 4096 });
   const clients = new Map<string, Client>();
   let nextId = 1;
-  let king: Client | undefined;
+  const crown = createCrown(practice ? PRACTICE_CROWN_SITES : undefined);
+  let shotObstacles: readonly Obstacle[] | undefined;
+  let practiceTargetIndex = 0;
+
+  function practiceTarget(): Player {
+    const { x, z } = PRACTICE_TARGET_SITES[practiceTargetIndex];
+    return {
+      id: PRACTICE_ID,
+      x,
+      y: ground(x, z),
+      z,
+      yaw: Math.PI,
+      name: 'Practice target',
+      practice: true,
+    };
+  }
 
   function broadcast(snapshot: PresenceMessage) {
     const message = JSON.stringify(snapshot);
@@ -70,15 +104,62 @@ export function attachPresence(
     feed ? [feed] : undefined,
   );
 
-  function setKing(client: Client, enabled: boolean) {
-    if (enabled) {
-      if (king && king !== client) setKing(king, false);
-      king = client;
-    } else if (king === client) {
-      king = undefined;
+  function playersWithPoses(): Player[] {
+    return [...clients.values()].flatMap(({ id, pose }) =>
+      pose ? [{ id, ...pose }] : [],
+    );
+  }
+
+  function shoot(client: Client, aim: Shoot, now: number) {
+    const state = crown.state;
+    if (
+      !client.pose ||
+      !('holder' in state) ||
+      state.holder !== client.id ||
+      now >= state.expiresAt ||
+      now < client.nextShot
+    )
+      return;
+    client.nextShot = now + SHOT_INTERVAL;
+    shotObstacles ??= makeTerrain().obstacles;
+    const players = playersWithPoses();
+    if (practice) players.push(practiceTarget());
+    const { path, target } = traceShot(
+      { ...client.pose, id: client.id },
+      aim,
+      players,
+      shotObstacles,
+      plots.snapshot()?.papers.length ?? 0,
+    );
+    const shot = { type: 'gunshot' as const, shooter: client.id, path };
+    const line = Math.floor(Math.random() * HIT_LINES.length);
+    if (practice && target === PRACTICE_ID) {
+      practiceTargetIndex =
+        (practiceTargetIndex + 1) % PRACTICE_TARGET_SITES.length;
+      broadcast({ ...shot, hit: { id: PRACTICE_ID, line } });
+      return;
     }
-    if (client.ws.readyState === WebSocket.OPEN)
-      client.ws.send(JSON.stringify({ type: 'king', enabled }));
+    const victim = [...clients.values()].find((peer) => peer.id === target);
+    if (!victim?.pose) {
+      broadcast(shot);
+      return;
+    }
+    const { x, y, z, yaw } = spawnView(victim.slot);
+    victim.pose = { ...victim.pose, x, y: y - EYE_HEIGHT, z, yaw };
+    victim.spawnRevision++;
+    victim.respawnPending = true;
+    broadcast({
+      ...shot,
+      hit: {
+        id: victim.id,
+        line,
+        respawn: {
+          id: victim.id,
+          slot: victim.slot,
+          spawnRevision: victim.spawnRevision,
+        },
+      },
+    });
   }
 
   function upgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
@@ -106,7 +187,6 @@ export function attachPresence(
       );
       let slot = 0;
       while (occupied.has(slot)) slot++;
-      const nonce = randomBytes(32).toString('hex');
       const client: Client = {
         ws,
         id: previous?.id ?? nextId++,
@@ -114,19 +194,29 @@ export function attachPresence(
         pose: previous?.pose,
         updatedAt: performance.now(),
         nextPlacement: 0,
-        nextProof: 0,
+        nextShot: 0,
+        spawnRevision: previous?.respawnPending ? previous.spawnRevision : 0,
+        respawnPending: previous?.respawnPending,
       };
       clients.set(session, client);
-      previous?.ws.close(4001, 'Connection replaced');
+      if (previous) {
+        crown.release(previous.id, playersWithPoses());
+        previous.ws.close(4001, 'Connection replaced');
+      }
       ws.on('error', () => ws.terminate());
       ws.on('close', () => {
-        if (clients.get(session) === client) clients.delete(session);
-        if (king === client) king = undefined;
+        if (clients.get(session) !== client) return;
+        clients.delete(session);
+        crown.release(client.id, playersWithPoses());
       });
       ws.on('message', (data, binary) => {
         if (binary || clients.get(session) !== client) return;
         const now = performance.now();
         const message = parseMessage(data.toString());
+        if (isShoot(message)) {
+          shoot(client, message, now);
+          return;
+        }
         if (isPlacement(message)) {
           if (now < client.nextPlacement) return;
           client.nextPlacement = now + 1000;
@@ -144,41 +234,16 @@ export function attachPresence(
           }
           return;
         }
-        if (
-          message &&
-          typeof message === 'object' &&
-          'type' in message &&
-          message.type === 'king'
-        ) {
-          if ('enabled' in message && message.enabled === false) {
-            client.proof = undefined;
-            if (king === client) setKing(client, false);
-          } else if (
-            now >= client.nextProof &&
-            'key' in message &&
-            typeof message.key === 'string' &&
-            /^[a-f0-9]{64}$/.test(message.key) &&
-            'proof' in message &&
-            isProof(message.proof) &&
-            client.proof !== message.proof
-          ) {
-            client.nextProof = now + 6000;
-            const proof = message.proof;
-            client.proof = proof;
-            void verifyKing(nonce, message.key, proof)
-              .catch(() => false)
-              .then((enabled) => {
-                if (clients.get(session) === client && client.proof === proof) {
-                  if (!enabled) client.proof = undefined;
-                  setKing(client, enabled);
-                }
-              });
-          }
-          return;
-        }
         if (client.pose && now - client.updatedAt < PRESENCE_INTERVAL / 2)
           return;
         if (!isPose(message)) return;
+        if (
+          client.spawnRevision &&
+          (!('spawnRevision' in message) ||
+            message.spawnRevision !== client.spawnRevision)
+        )
+          return;
+        client.respawnPending = undefined;
         const { x, y, z, yaw } = message;
         client.pose = {
           x,
@@ -198,7 +263,13 @@ export function attachPresence(
         type: 'welcome',
         id: client.id,
         slot: client.slot,
-        nonce,
+        respawn: client.respawnPending
+          ? {
+              id: client.id,
+              slot: client.slot,
+              spawnRevision: client.spawnRevision,
+            }
+          : undefined,
       };
       ws.send(JSON.stringify(welcome));
       const { day, posts } = plots.placements();
@@ -220,7 +291,6 @@ export function attachPresence(
   http.on('upgrade', upgrade);
   const timer = setInterval(() => {
     const now = performance.now();
-    const players = [];
     for (const [session, client] of clients) {
       const { ws } = client;
       if (
@@ -228,23 +298,32 @@ export function attachPresence(
         ws.bufferedAmount > MAX_QUEUED_BYTES
       ) {
         clients.delete(session);
+        crown.release(client.id, playersWithPoses());
         ws.terminate();
-      } else if (client.pose) {
-        players.push({
-          id: client.id,
-          ...client.pose,
-          king: client === king ? (true as const) : undefined,
-          kingScale:
-            client === king ? readKingScale(client.pose.kingScale) : undefined,
-        });
       }
     }
+
     if (!clients.size) return;
-    const snapshot: PresenceMessage = { type: 'players', players };
-    const data = JSON.stringify(snapshot);
-    for (const { ws } of clients.values()) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    const players = playersWithPoses();
+    crown.update(now, players);
+    const state = crown.state;
+    for (const player of players) {
+      if ('holder' in state && player.id === state.holder) {
+        player.king = true;
+        player.kingScale = readKingScale(player.kingScale);
+      } else {
+        delete player.kingScale;
+      }
     }
+    if (practice) players.push(practiceTarget());
+    broadcast({
+      type: 'players',
+      players,
+      crown:
+        'location' in state
+          ? state.location
+          : { holder: state.holder, remainingMs: state.expiresAt - now },
+    });
   }, PRESENCE_INTERVAL);
   timer.unref();
 

@@ -6,8 +6,6 @@ import { EventKey } from '../../../packages/js-core/src/proto/polycentric/v2/eve
 import {
   Event,
   EventBundle,
-  ListEventsRequest,
-  ListEventsResponse,
   SignedEvent,
 } from '../../../packages/js-core/src/proto/polycentric/v2/events.ts';
 import {
@@ -18,7 +16,10 @@ import {
 } from '../../../packages/js-core/src/proto/polycentric/v2/feeds.ts';
 import { SortPostsBy } from '../../../packages/js-core/src/proto/polycentric/v2/search.ts';
 
-const king = 'cc8ce89f64566ee9efce26d559d50dfd1ef63bb787c5e4d57f1473a0e94d6727';
+export { createCrown } from '../src/world/crown.ts';
+export { EYE_HEIGHT, spawnView } from '../src/world/movement.ts';
+export { HIT_LINES } from '../src/world/presence-protocol.ts';
+export { ground, WATER } from '../src/world/terrain.ts';
 const author = 'ab'.repeat(32);
 export const resetTime = Date.parse('2026-11-20T09:00:00.000Z');
 
@@ -115,24 +116,9 @@ export function exploreFeedResponse(payload: Uint8Array, postSigner: string) {
   );
 }
 
-export function mockHarbor(
-  clockFile: string,
-  authorizedKey: string,
-  postSigner: string,
-) {
+export function mockHarbor(clockFile: string, postSigner: string) {
   Date.now = () => Number(readFileSync(clockFile, 'utf8'));
   const { worldPost, regularPost } = postFixtures(postSigner);
-  const document = makeBundle(
-    EventKey.create({ identity: king, collection: 1, sequence: 1n }),
-    Content.create({
-      contentBody: {
-        oneofKind: 'identity',
-        identity: {
-          signingKeys: [{ keyType: 1, key: Buffer.from(authorizedKey, 'hex') }],
-        },
-      },
-    }),
-  );
   const fetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -154,19 +140,6 @@ export function mockHarbor(
         return grpcResponse(
           GetPostResponse.toBinary(
             GetPostResponse.create({ candidates: post ? [post.bundle] : [] }),
-          ),
-        );
-      }
-      case 'ListEvents': {
-        const { filters } = ListEventsRequest.fromBinary(payload);
-        return grpcResponse(
-          ListEventsResponse.toBinary(
-            ListEventsResponse.create({
-              eventBundles:
-                filters?.identity === king && filters.collection === 1
-                  ? [document]
-                  : [],
-            }),
           ),
         );
       }

@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import {
-  createHash,
-  generateKeyPairSync,
-  randomBytes,
-  sign,
-} from 'node:crypto';
+import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { once } from 'node:events';
 import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -23,12 +18,6 @@ function keyPair() {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   const key = Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url');
   return { privateKey, key: key.toString('hex') };
-}
-
-function kingProof({ key, privateKey }, nonce) {
-  const challenge = Buffer.from(`Harbor Overworld King Mode\n${nonce}`);
-  const proof = sign(null, challenge, privateKey).toString('hex');
-  return { type: 'king', key, proof };
 }
 
 function placement({ privateKey }, id, { x, z }, signedEvent, publishedAt) {
@@ -49,6 +38,10 @@ function connect(t) {
   ws.on('message', (data) => received.push(JSON.parse(data)));
   return {
     received,
+    async close() {
+      ws.close();
+      await once(ws, 'close');
+    },
     send(value) {
       ws.send(JSON.stringify(value));
     },
@@ -69,7 +62,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   const plots = join(dir, 'plots.json');
   const fixture = join(dir, 'fixture.mjs');
   const preload = join(dir, 'preload.mjs');
-  const royalKey = keyPair();
+  const otherKey = keyPair();
   const authorKey = keyPair();
   let stopServer;
   t.after(async () => {
@@ -85,8 +78,18 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     platform: 'node',
     format: 'esm',
   });
-  const { resetTime, postFixtures, signHeader, exploreFeedResponse } =
-    await import(pathToFileURL(fixture));
+  const {
+    resetTime,
+    postFixtures,
+    signHeader,
+    exploreFeedResponse,
+    createCrown,
+    EYE_HEIGHT,
+    spawnView,
+    HIT_LINES,
+    ground,
+    WATER,
+  } = await import(pathToFileURL(fixture));
   const { worldPost, regularPost } = postFixtures(authorKey.key);
   await Promise.all([
     copyFile(
@@ -96,7 +99,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     writeFile(clock, String(resetTime - 1)),
     writeFile(
       preload,
-      `import { mockHarbor } from './fixture.mjs';\nmockHarbor(...${JSON.stringify([clock, royalKey.key, authorKey.key])});\n`,
+      `import { mockHarbor } from './fixture.mjs';\nmockHarbor(...${JSON.stringify([clock, authorKey.key])});\n`,
     ),
   ]);
 
@@ -128,38 +131,19 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     assert.equal((await fetch(`${origin}/healthz`)).status, 200);
   }
 
-  await t.test(
-    'verifies a known device even when both identity lookups stall',
-    async () => {
-      const verifier = join(dir, 'king.mjs');
-      await build({
-        entryPoints: [fileURLToPath(new URL('./king.ts', import.meta.url))],
-        outfile: verifier,
-        bundle: true,
-        platform: 'node',
-        format: 'esm',
-      });
-      const { verifyKing } = await import(pathToFileURL(verifier));
-      const known = new Set([
-        createHash('sha256')
-          .update(Buffer.from(royalKey.key, 'hex'))
-          .digest('hex'),
-      ]);
-      const nonce = 'e'.repeat(64);
-      const { key, proof } = kingProof(royalKey, nonce);
-      const originalFetch = globalThis.fetch;
-      globalThis.fetch = () => new Promise(() => {});
-      try {
-        assert.equal(await verifyKing(nonce, key, proof, known), true);
-        assert.equal(
-          await verifyKing('a'.repeat(64), key, proof, known),
-          false,
-        );
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-    },
-  );
+  await t.test('expires the crown after exactly one minute', () => {
+    const crown = createCrown();
+    const { location } = crown.state;
+    assert.ok(ground(location.x, location.z) > WATER);
+    const player = { id: 1, ...location, y: ground(location.x, location.z) };
+    crown.update(100, [player]);
+    assert.deepEqual(crown.state, { holder: 1, expiresAt: 60_100 });
+    crown.update(60_099, [player]);
+    assert.equal(crown.state.holder, 1);
+    crown.update(60_100, [player]);
+    assert.ok(ground(crown.state.location.x, crown.state.location.z) > WATER);
+    assert.notDeepEqual(crown.state.location, location);
+  });
 
   await t.test(
     'loads daily papers through two root-scoped feed origins',
@@ -246,9 +230,8 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     async () => {
       assert.notEqual(first.id, second.id);
       assert.notEqual(first.slot, second.slot);
-      assert.notEqual(first.nonce, second.nonce);
       const pose = { x: 1, y: 2, z: 3, yaw: 0 };
-      a.send({ ...pose, king: true });
+      a.send({ ...pose, king: true, kingScale: 10 });
       b.send({ ...pose, x: 4 });
       const snapshot = await b.until(
         (m) => m.type === 'players' && m.players.length === 2,
@@ -272,58 +255,148 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   );
 
   await t.test(
-    'enables King Mode only with a current challenge signed by an authorized device',
+    'shares a single crown pickup and respawns it on departure',
     async () => {
-      b.send(kingProof(keyPair(), second.nonce));
-      assert.deepEqual(await b.until((m) => m.type === 'king'), {
-        type: 'king',
-        enabled: false,
-      });
-
-      const proof = kingProof(royalKey, first.nonce);
-      a.send(proof);
-      assert.deepEqual(await a.until((m) => m.type === 'king'), {
-        type: 'king',
-        enabled: true,
-      });
-      const crown = await b.until(
-        (m) => m.type === 'players' && m.players.some((p) => p.king),
+      const [collector, rival] = [connect(t), connect(t)];
+      const { id: rivalId } = await rival.until((m) => m.type === 'welcome');
+      const { id } = await collector.until((m) => m.type === 'welcome');
+      const initial = await collector.until((m) => m.type === 'players');
+      const { crown: location } = initial;
+      assert.ok(ground(location.x, location.z) > WATER);
+      assert.equal(
+        initial.players.some((p) => p.king),
+        false,
       );
       assert.deepEqual(
-        crown.players.filter((p) => p.king).map((p) => p.id),
-        [first.id],
+        (await a.until((m) => m.type === 'players')).crown,
+        location,
       );
 
-      const observer = connect(t);
-      const another = await observer.until((m) => m.type === 'welcome');
-      assert.notEqual(another.nonce, first.nonce);
-      observer.send(proof);
-      assert.deepEqual(await observer.until((m) => m.type === 'king'), {
-        type: 'king',
-        enabled: false,
-      });
-
-      const otherDevice = connect(t);
-      const otherWelcome = await otherDevice.until((m) => m.type === 'welcome');
-      const beforeTransfer = a.received.length;
-      otherDevice.send({ x: 5, y: 2, z: 3, yaw: 0 });
-      otherDevice.send(kingProof(royalKey, otherWelcome.nonce));
-      assert.deepEqual(await otherDevice.until((m) => m.type === 'king'), {
-        type: 'king',
-        enabled: true,
-      });
-      assert.deepEqual(
-        await a.until((m) => m.type === 'king', beforeTransfer),
-        { type: 'king', enabled: false },
-      );
-      const newCrown = await b.until(
+      const pose = { ...location, y: ground(location.x, location.z), yaw: 0 };
+      collector.send({ ...pose, y: pose.y + 2, king: true });
+      const above = await b.until(
         (m) =>
           m.type === 'players' &&
-          m.players.some((p) => p.id === otherWelcome.id && p.king),
+          m.players.some((p) => p.id === id && p.y === pose.y + 2),
       );
-      assert.deepEqual(
-        newCrown.players.filter((p) => p.king).map((p) => p.id),
-        [otherWelcome.id],
+      assert.deepEqual(above.crown, location);
+
+      await sleep(100);
+      collector.send(pose);
+      rival.send(pose);
+      const claimed = (m) =>
+        m.type === 'players' && m.crown.holder !== undefined;
+      const snapshots = await Promise.all(
+        [a, collector, rival].map((client) => client.until(claimed)),
+      );
+      const { holder, remainingMs } = snapshots[0].crown;
+      assert.ok(holder === id || holder === rivalId);
+      assert.ok(remainingMs > 59_000 && remainingMs <= 60_000);
+      assert.equal(
+        snapshots.every((m) => m.crown.holder === holder),
+        true,
+      );
+      for (const snapshot of snapshots)
+        assert.deepEqual(
+          snapshot.players.filter((p) => p.king).map((p) => p.id),
+          [holder],
+        );
+
+      const winner = holder === id ? collector : rival;
+      const observer = holder === id ? rival : collector;
+      const cursor = observer.received.length;
+      await winner.close();
+      const respawn = await observer.until(
+        (m) => m.type === 'players' && 'x' in m.crown,
+        cursor,
+      );
+      assert.notDeepEqual(respawn.crown, location);
+      assert.equal(
+        respawn.players.some((p) => p.king),
+        false,
+      );
+
+      const next = {
+        ...respawn.crown,
+        y: ground(respawn.crown.x, respawn.crown.z),
+        yaw: 0,
+      };
+      observer.send({ ...next, kingScale: 5 });
+      const nextClaim = await observer.until(claimed, cursor);
+      assert.notEqual(nextClaim.crown.holder, holder);
+      assert.equal(nextClaim.players.find((p) => p.king)?.kingScale, 5);
+      await observer.close();
+    },
+  );
+
+  await t.test(
+    'only the King can shoot and the whole room receives the hit',
+    async (t) => {
+      const [shooter, victim] = [connect(t), connect(t)];
+      const me = await shooter.until((m) => m.type === 'welcome');
+      const other = await victim.until((m) => m.type === 'welcome');
+      const start = await shooter.until((m) => m.type === 'players');
+      const onCrown = {
+        ...start.crown,
+        y: ground(start.crown.x, start.crown.z),
+        yaw: 0,
+      };
+      const from = { x: 0.5, y: 40, z: 17.5, yaw: 0 };
+      const at = { ...from, z: 10.5 };
+      const aim = {
+        type: 'shoot',
+        yaw: 0,
+        pitch: Math.atan2(0.75 - 2 * EYE_HEIGHT, from.z - at.z),
+        kingScale: 2,
+      };
+      const atHeight = (id, y) => (m) =>
+        m.type === 'players' && m.players.some((p) => p.id === id && p.y === y);
+      victim.send(aim);
+      victim.send(at);
+      await victim.until(atHeight(other.id, at.y));
+      assert.equal(
+        victim.received.some((m) => m.type === 'gunshot'),
+        false,
+      );
+
+      shooter.send(onCrown);
+      await shooter.until(
+        (m) => m.type === 'players' && m.crown.holder === me.id,
+      );
+      await sleep(100);
+      shooter.send(from);
+      await shooter.until(atHeight(me.id, from.y));
+      shooter.send(aim);
+      shooter.send(aim);
+      const [shot, heardByVictim, heardByObserver] = await Promise.all(
+        [shooter, victim, a].map((peer) =>
+          peer.until((m) => m.type === 'gunshot'),
+        ),
+      );
+      assert.deepEqual(heardByVictim, shot);
+      assert.deepEqual(heardByObserver, shot);
+      assert.equal(shot.shooter, me.id);
+      assert.equal(shot.path.impact, true);
+      assert.ok(Math.abs(shot.path.end[2] - at.z) < 0.4);
+      assert.equal(shot.hit.id, other.id);
+      assert.ok(HIT_LINES[shot.hit.line]);
+      assert.deepEqual(shot.hit.respawn, {
+        id: other.id,
+        slot: other.slot,
+        spawnRevision: 1,
+      });
+
+      const spawn = spawnView(other.slot);
+      const cursor = victim.received.length;
+      victim.send(at);
+      const afterHit = await victim.until((m) => m.type === 'players', cursor);
+      const respawned = afterHit.players.find((p) => p.id === other.id);
+      assert.equal(respawned.x, spawn.x);
+      assert.equal(respawned.z, spawn.z);
+      assert.equal(respawned.y, spawn.y - EYE_HEIGHT);
+      assert.equal(
+        victim.received.filter((m) => m.type === 'gunshot').length,
+        1,
       );
     },
   );
@@ -345,7 +418,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
       const unsigned = { type: 'place', id: worldPost.id, ...otherLocation };
       const denied = [
         ['missing signature', unsigned],
-        ['wrong signer', place(royalKey, otherLocation)],
+        ['wrong signer', place(otherKey, otherLocation)],
         ['changed coordinates', { ...signedPlacement, ...otherLocation }],
         [
           'wrong application',
@@ -361,7 +434,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
           'wrong event header',
           {
             ...signedPlacement,
-            signedEvent: signHeader(worldPost, royalKey.privateKey),
+            signedEvent: signHeader(worldPost, otherKey.privateKey),
           },
         ],
       ];

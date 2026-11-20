@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createPlayerMovement } from './movement.ts';
+import { createPlayerMovement, EYE_HEIGHT } from './movement.ts';
 import { replayScenario, scenarios, scenarioView } from './scenarios.ts';
 import { ground, makeTerrain, WATER } from './terrain.ts';
 
@@ -24,6 +24,17 @@ test('king-jump clears a noticeboard that blocks walking', () => {
     frames.at(-1).z < scene.z - 1,
     'jumping lets the player cross the board',
   );
+});
+
+test('king-ascent rises continuously while held and falls when released', () => {
+  const scene = scenarios['king-ascent'];
+  const frames = replay(scene);
+  const start = ground(scene.x, scene.z) + EYE_HEIGHT;
+  for (let frame = 1; frame < 120; frame++)
+    assert.ok(frames[frame].y > frames[frame - 1].y);
+  assert.ok(frames[119].y > start + 10);
+  assert.ok(frames[120].y < frames[119].y);
+  assert.equal(frames.at(-1).y, start);
 });
 
 test('lighthouse clears the lighthouse footprint with chained King jumps', () => {
@@ -55,6 +66,17 @@ test('ledge lets a regular player retreat when their footprint overlaps a steep 
   const scene = scenarios.ledge;
   assert.equal(ground(scene.x + 0.18, scene.z), ground(scene.x, scene.z) + 2);
   assert.ok(replay(scene).at(-1).x < -73.18);
+});
+
+test('ledge-drop falls under gravity and lands three blocks down', () => {
+  const scene = scenarios['ledge-drop'];
+  const upper = ground(scene.x, scene.z);
+  const lower = ground(scene.x + 1, scene.z);
+  assert.equal(upper - lower, 3);
+  const frames = replay(scene);
+  assert.ok(frames[12].x > scene.x + 0.75, 'the player walks off the ledge');
+  assert.ok(frames[12].y > lower + EYE_HEIGHT, 'the player is still falling');
+  assert.equal(frames.at(-1).y, lower + EYE_HEIGHT);
 });
 
 test('tree lets a regular player walk away while the trunk stays solid', () => {

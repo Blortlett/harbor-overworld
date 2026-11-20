@@ -1,4 +1,6 @@
 export const SPAWN = { x: 0.5, z: 17.5 };
+export const LIGHTHOUSE = { x: 26.5, z: -37.5 };
+export const DOCK = { start: 6, end: 17.3, z: 19.4, halfWidth: 1.1, deck: 2 };
 type Station = readonly [x: number, z: number, sideways?: boolean];
 export const STATIONS: readonly Station[] = [
   [0.5, 8.5],
@@ -266,6 +268,68 @@ export class Mesh {
   }
 }
 
+function addDock(mesh: Mesh, obstacles: Obstacle[]) {
+  const { start, end, z, halfWidth, deck } = DOCK;
+  const timber: Color = [0.33, 0.235, 0.15];
+  for (let i = 0; i < 24; i++) {
+    const plank = start + ((end - start) * i) / 24;
+    const tone = 0.88 + noise(i, 38) * 0.24;
+    mesh.box(
+      plank,
+      deck - 0.18,
+      z - halfWidth,
+      (end - start) / 24 - 0.015,
+      0.18,
+      halfWidth * 2,
+      tint([0.58, 0.43, 0.27], tone),
+    );
+  }
+  for (const side of [-1, 1]) {
+    const edge = z + side * (halfWidth - 0.12);
+    mesh.box(start, deck - 0.35, edge - 0.1, end - start, 0.19, 0.2, timber);
+    for (const x of [7.6, 10.55, 13.5, 16.65]) {
+      mesh.box(x - 0.13, 0.45, edge - 0.13, 0.26, deck - 0.05, 0.26, timber);
+      mesh.box(x - 0.16, deck + 0.4, edge - 0.16, 0.32, 0.08, 0.32, basalt);
+    }
+  }
+  mesh.box(
+    end - 0.85,
+    deck + 0.46,
+    z - halfWidth + 0.21,
+    0.08,
+    0.3,
+    0.08,
+    timber,
+  );
+  mesh.box(
+    end - 0.95,
+    deck + 0.72,
+    z - halfWidth + 0.11,
+    0.28,
+    0.22,
+    0.28,
+    [1, 0.74, 0.32],
+    3,
+  );
+  mesh.box(
+    end - 0.97,
+    deck + 0.94,
+    z - halfWidth + 0.09,
+    0.32,
+    0.07,
+    0.32,
+    basalt,
+  );
+  obstacles.push({
+    x: (start + end) / 2,
+    z,
+    halfWidth: (end - start) / 2,
+    halfDepth: halfWidth,
+    bottom: deck - 0.18,
+    top: deck,
+  });
+}
+
 function addTree(
   mesh: Mesh,
   obstacles: Obstacle[],
@@ -353,8 +417,7 @@ function addLighthouse(mesh: Mesh, x: number, y: number, z: number) {
 export function makeTerrain() {
   const mesh = new Mesh();
   const obstacles: Obstacle[] = [];
-  const lightX = 26.5;
-  const lightZ = -37.5;
+  const { x: lightX, z: lightZ } = LIGHTHOUSE;
   for (let z = MIN_Z; z < MAX_Z; z++) {
     for (let x = MIN_X; x < MAX_X; x++) {
       const y = ground(x, z);
@@ -456,6 +519,7 @@ export function makeTerrain() {
   }
   const lightY = ground(lightX, lightZ);
   addLighthouse(mesh, lightX, lightY, lightZ);
+  addDock(mesh, obstacles);
   obstacles.push({
     x: lightX,
     z: lightZ,

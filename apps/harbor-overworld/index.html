@@ -30,7 +30,7 @@
             <button type="button" class="fullscreen plate" id="fullscreen" aria-label="Enter fullscreen" title="Enter fullscreen" hidden><span class="fullscreen-icon" aria-hidden="true"></span></button>
           </div>
           <p class="room-status plate" id="room-status" role="status" hidden></p>
-          <p class="room-status plate" id="king-status" role="status" hidden>King Mode</p>
+          <p class="room-status plate" id="king-status" role="timer" hidden>King Mode</p>
           <button type="button" class="room-status plate" id="king-size" title="Cycle King size (K)" aria-keyshortcuts="K" hidden>Size 2×</button>
           <p class="room-status plate" id="fullscreen-status" role="status" hidden></p>
         </div>
@@ -47,7 +47,7 @@
       <section class="welcome" id="welcome" aria-label="Enter the world">
         <p class="eyebrow"><span></span> THE COAST</p>
         <h1>Harbor<br /><em>Overworld</em></h1>
-        <p class="welcome-copy" id="welcome-copy">Follow the lights to read live Harbor posts.</p>
+        <p class="welcome-copy" id="welcome-copy">Follow the lights to read live Harbor posts. Find the crown to become King for one minute.</p>
         <p class="touch-help">Use the stick to walk. Drag the landscape to look.</p>
         <form id="welcome-identity" class="welcome-identity">
           <label for="welcome-name">New to Harbor? Pick a display name</label>
@@ -69,6 +69,7 @@
         <div class="move-stick plate" id="move-stick" aria-hidden="true"><span id="move-thumb"></span></div>
         <div class="touch-actions">
           <button type="button" class="plate" id="touch-jump">Jump</button>
+          <button type="button" class="plate" id="touch-shoot" hidden>Shoot</button>
           <button type="button" class="plate" id="touch-chat">Chat</button>
         </div>
       </fieldset>
@@ -77,8 +78,12 @@
           <div class="control-row"><span class="key-group"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>Move</span></div>
           <div class="control-row"><span class="key-group"><span class="mouse-key" aria-hidden="true">◫</span></span><span>Look</span></div>
           <div class="control-row"><span class="key-group"><kbd>E</kbd></span><span>Turn page</span></div>
-          <div class="control-row"><span class="key-group"><kbd>Space</kbd></span><span>Jump</span></div>
+          <div class="control-row"><span class="key-group"><kbd>Space</kbd></span><span id="jump-hint">Jump</span></div>
           <button type="button" class="control-row" id="open-chat"><span class="key-group"><kbd>Enter</kbd></span><span>Chat</span></button>
+          <div id="king-controls" hidden>
+            <div class="control-row"><span class="key-group"><kbd>K</kbd></span><span>Cycle size</span></div>
+            <div class="control-row"><span class="key-group"><kbd>Click</kbd></span><span>Shoot</span></div>
+          </div>
         </fieldset>
         <div class="map plate">
           <div class="map-heading"><span>COAST MAP</span><span>N</span></div>

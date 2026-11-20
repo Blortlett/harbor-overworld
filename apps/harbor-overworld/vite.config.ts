@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
+import { controlBridge } from './server/control-bridge.ts';
 import { playgroundFeed } from './server/playground.ts';
 import { attachPresence } from './server/presence.ts';
 
@@ -50,6 +51,7 @@ const multiplayer: Plugin = {
         httpServer,
         undefined,
         config.mode === 'playground' ? playgroundFeed : undefined,
+        config.mode === 'playground',
       );
   },
   configurePreviewServer({ httpServer }) {
@@ -58,7 +60,7 @@ const multiplayer: Plugin = {
 };
 
 export default defineConfig({
-  plugins: [wasmAsUrl, licenseNotices, multiplayer],
+  plugins: [wasmAsUrl, licenseNotices, multiplayer, controlBridge],
   server: {
     port: 5173,
   },

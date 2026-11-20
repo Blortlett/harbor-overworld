@@ -1,16 +1,21 @@
+import { MAX_PITCH } from './movement.ts';
 import { MAX_X, MAX_Z, MIN_X, MIN_Z } from './terrain.ts';
 
 export const PRESENCE_PATH = '/presence';
 export const PRESENCE_INTERVAL = 100;
 export const ROOM_CAPACITY = 24;
-export const KING_IDENTITY =
-  'cc8ce89f64566ee9efce26d559d50dfd1ef63bb787c5e4d57f1473a0e94d6727';
 export const OVERWORLD_APPLICATION = 'how.justin.harbor-overworld';
 export const POST_LIFETIME_MS = 60_000;
-
-export function kingChallenge(nonce: string) {
-  return new TextEncoder().encode(`Harbor Overworld King Mode\n${nonce}`);
-}
+export const CROWN_DURATION = 60_000;
+export const SHOT_INTERVAL = 450;
+export const HIT_LINES = [
+  'Ouch that hurt',
+  'Ooh owie that really hurt',
+  'ouch.',
+  'oof',
+  'you have shot me, my guy',
+  'Wilhelm scream',
+] as const;
 
 export type Pose = {
   x: number;
@@ -25,6 +30,56 @@ export const DEFAULT_KING_SCALE = 2;
 
 export function readKingScale(value: unknown): KingScale {
   return KING_SCALES.find((scale) => scale === value) ?? DEFAULT_KING_SCALE;
+}
+
+export type Shoot = {
+  type: 'shoot';
+  yaw: number;
+  pitch: number;
+  kingScale: KingScale;
+};
+export type Respawn = { id: number; slot: number; spawnRevision: number };
+export type ShotPoint = readonly [number, number, number];
+export type ShotPath = {
+  start: ShotPoint;
+  end: ShotPoint;
+  impact: boolean;
+};
+export type Gunshot = {
+  type: 'gunshot';
+  shooter: number;
+  path: ShotPath;
+  hit?: { id: number; line: number; respawn?: Respawn };
+};
+
+function isShotPoint(value: unknown): value is ShotPoint {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every(
+      (coordinate) =>
+        typeof coordinate === 'number' && Number.isFinite(coordinate),
+    )
+  );
+}
+
+export function isShotPath(value: unknown): value is ShotPath {
+  if (!value || typeof value !== 'object') return false;
+  const { start, end, impact } = value as Partial<ShotPath>;
+  return isShotPoint(start) && isShotPoint(end) && typeof impact === 'boolean';
+}
+
+export function isShoot(value: unknown): value is Shoot {
+  if (!value || typeof value !== 'object') return false;
+  const { type, yaw, pitch, kingScale } = value as Partial<Shoot>;
+  return (
+    type === 'shoot' &&
+    typeof yaw === 'number' &&
+    Math.abs(yaw) <= Math.PI &&
+    typeof pitch === 'number' &&
+    Math.abs(pitch) <= MAX_PITCH &&
+    KING_SCALES.some((scale) => scale === kingScale)
+  );
 }
 
 export type ChatPost = { id: string; text: string };
@@ -58,7 +113,9 @@ export function readChat(value: unknown): ChatPost | undefined {
         : preview.join(''),
   };
 }
-export type Player = NamedPose & { id: number; king?: true };
+export type Player = NamedPose & { id: number; king?: true; practice?: true };
+export type CrownLocation = { x: number; z: number };
+export type RoomCrown = CrownLocation | { holder: number; remainingMs: number };
 
 export function displayName(value: unknown) {
   if (typeof value !== 'string') return undefined;
@@ -92,9 +149,9 @@ export type PlacementUpdate = {
 export type PresenceMessage =
   | PlotSnapshot
   | PlacementUpdate
-  | { type: 'welcome'; id: number; slot: number; nonce: string }
-  | { type: 'king'; enabled: boolean }
-  | { type: 'players'; players: Player[] };
+  | { type: 'welcome'; id: number; slot: number; respawn?: Respawn }
+  | Gunshot
+  | { type: 'players'; players: Player[]; crown: RoomCrown };
 
 const resetClock = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Chicago',

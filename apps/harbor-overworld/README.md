@@ -10,6 +10,25 @@ with R, and open chat with Enter. On a touchscreen, use the joystick to move,
 drag the scene to look, and tap Jump or Chat. The fullscreen button appears
 when your browser supports fullscreen.
 
+Follow the coast east of the spawn point to find the dock. Press **F** or tap
+**Board boat** to get aboard. Use **W/S** for throttle and **A/D** to steer,
+or use the touch joystick. Press **F** or tap **Leave boat** to get out.
+
+The seaplane is moored on the other side of the dock. Press **G** or tap
+**Board seaplane**. Hold **W** and **↑** to take off, use **A/D** to turn,
+and use **↓** to descend toward open water. Press **S** to slow down and
+**G** to leave once stopped. On touchscreens, use the joystick for throttle
+and steering, and hold **Climb** or **Descend** for pitch.
+
+Follow the gold beacon and walk into the crown to become King for one
+minute. The crown appears at a random spot along an island trail and
+respawns when the minute ends or the King leaves the room. While crowned,
+press **K** or tap **Size** to cycle your size. Hold **Space** or **Rise**
+to ascend and release it to fall. Aim with the crosshair and left-click or
+tap **Shoot**. A hit sends the other player back to their harbor spawn. The
+[sound effects credits](public/sounds/CREDITS.txt) include the original
+Wilhelm scream.
+
 ## Run locally
 
 Download the [release archive](https://github.com/SomewhatJustin/harbor-overworld/releases/latest/download/harbor-overworld.tar.gz)
@@ -37,10 +56,15 @@ pnpm --filter harbor-overworld playground --open '/?scene=noticeboard'
 
 Enter the world to read a sample post from the second feed page. Use the
 scene menu to spawn at the shoreline, a tree, or a ledge. Use **Replay** to run
-the same recorded inputs as the movement tests. The King checkbox enables
-local King controls and **K** cycles the size. Open **Join in another tab**
-and enter in both tabs to check remote player movement. The sample Like
+the same recorded inputs as the movement tests. For a King jump replay,
+enter and find the crown to start the recorded jumps. Open **Join in
+another tab** and enter in both tabs to check movement and crown pickup. The sample Like
 button stores its state in the current tab.
+
+Open `/?scene=shooting` to practice. The playground puts the crown just
+ahead of spawn and a practice target farther down the trail.
+
+Open `/?scene=seaplane` to start beside the parked seaplane.
 
 ```sh
 pnpm --filter harbor-overworld test:movement
@@ -48,6 +72,34 @@ pnpm --filter harbor-overworld test:presence
 node --test --test-name-pattern=shoreline apps/harbor-overworld/src/world/movement.test.mjs
 node apps/harbor-overworld/scripts/check-live.mjs http://127.0.0.1:5173 --room-only
 ```
+
+### Control the playground from a CLI
+
+Open a playground tab at [http://127.0.0.1:5173/?control=player](http://127.0.0.1:5173/?control=player).
+The `control` query value names the tab. Use a distinct name for each tab
+you want to control, and include `--tab NAME` when several are connected.
+Keep the tab selected while moving so the browser continues running frames.
+
+```sh
+pnpm --filter harbor-overworld control help
+pnpm --filter harbor-overworld control tabs
+pnpm --filter harbor-overworld control enter
+pnpm --filter harbor-overworld control move 1 0 0 0 1000
+pnpm --filter harbor-overworld control look 90 0
+pnpm --filter harbor-overworld control status
+```
+
+In the seaplane scene, use `control plane` to board or leave. The fourth
+axis of `control move` controls pitch while flying.
+
+`move` sets forward, sideways, turn, and look axes in the range −1 to 1.
+Its final argument is a duration in milliseconds. A zero duration holds
+the axes until another `move` or `stop`. Commands such as `boat`, `size`,
+and `shoot` follow the same availability as the on-screen controls. To
+target a different port, put `--url http://127.0.0.1:PORT` before the
+command. Fullscreen and audio may need an initial click in the tab.
+
+While crowned, use `ascend true` to rise and `ascend false` to release.
 
 ## Test multiplayer locally
 
@@ -118,7 +170,7 @@ To route shared noticeboard feeds through private proxies, set
 base URLs, one origin per proxy with no path prefix. Each proxy must accept
 `POST /polycentric.v2.FeedsService/GetExploreFeed`. If unset or blank, the
 presence server uses the public Harbor and Polycentric origins. This setting
-does not change browser traffic or identity verification.
+does not change browser traffic.
 
 The server listens on `0.0.0.0:8080`. Check it locally with
 `curl -fsS http://127.0.0.1:8080/healthz`. Add this directive inside the

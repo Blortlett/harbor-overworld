@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "playground": "vite --mode playground --host 127.0.0.1 --strictPort",
+    "control": "node scripts/control.mjs",
     "test:movement": "node --test src/world/movement.test.mjs",
     "test:presence": "pnpm run build:presence && node --test server/presence.test.mjs"
   },

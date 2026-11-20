@@ -70,22 +70,30 @@ export function gunMesh(firstPerson = false) {
   return new Float32Array(mesh.vertices);
 }
 
-export function crownMesh() {
+export function crownMesh(base = 1.51) {
   const mesh = new Mesh();
   const gold: Color = [0.99, 0.69, 0.17];
   const highlight: Color = [1, 0.84, 0.35];
   const ruby: Color = [0.79, 0.14, 0.24];
-  mesh.box(-0.193, 1.51, -0.19, 0.386, 0.085, 0.372, gold);
-  mesh.box(-0.198, 1.578, -0.195, 0.396, 0.02, 0.382, highlight);
+  mesh.box(-0.193, base, -0.19, 0.386, 0.085, 0.372, gold);
+  mesh.box(-0.198, base + 0.068, -0.195, 0.396, 0.02, 0.382, highlight);
   for (const z of [-0.19, 0.13]) {
     for (const x of [-0.193, 0.139]) {
-      mesh.box(x, 1.595, z, 0.054, 0.099, 0.054, gold);
-      mesh.box(x + 0.009, 1.686, z + 0.009, 0.036, 0.035, 0.036, highlight);
+      mesh.box(x, base + 0.085, z, 0.054, 0.099, 0.054, gold);
+      mesh.box(
+        x + 0.009,
+        base + 0.176,
+        z + 0.009,
+        0.036,
+        0.035,
+        0.036,
+        highlight,
+      );
     }
   }
-  mesh.box(-0.033, 1.595, -0.19, 0.066, 0.136, 0.054, gold);
-  mesh.box(-0.023, 1.717, -0.18, 0.046, 0.041, 0.034, highlight);
-  mesh.box(-0.022, 1.534, -0.198, 0.044, 0.043, 0.011, ruby);
+  mesh.box(-0.033, base + 0.085, -0.19, 0.066, 0.136, 0.054, gold);
+  mesh.box(-0.023, base + 0.207, -0.18, 0.046, 0.041, 0.034, highlight);
+  mesh.box(-0.022, base + 0.024, -0.198, 0.044, 0.043, 0.011, ruby);
   return new Float32Array(mesh.vertices);
 }
 

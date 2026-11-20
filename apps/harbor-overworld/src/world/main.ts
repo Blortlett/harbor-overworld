@@ -14,20 +14,22 @@ import { createIdentity, latestLocalProfile } from '../data/identity';
 import { findLike, setLike } from '../data/likes';
 import { decodePostBundle, eventKeyFromId, type PostData } from '../data/posts';
 import { coatIndex, COATS } from './avatar';
+import { bindBoat } from './boat';
 import { bindIdentityDialog } from './connect';
+import { createControls, POINTER_DEGREES } from './controls';
+import { createCrown } from './crown';
+import { createGunAudio } from './gun-audio';
 import { bindMobileControls } from './mobile';
 import { createPlayerMovement, EYE_HEIGHT, spawnView } from './movement';
 import { PostNotice } from './notice';
-import { type Avatar, createPresence } from './presence';
+import { type Avatar, createPresence, type LocalCrown } from './presence';
 import {
   DEFAULT_KING_SCALE,
   displayName,
   isPlacedPost,
   isPlacement,
-  KING_IDENTITY,
   KING_SCALES,
   type KingScale,
-  kingChallenge,
   OVERWORLD_APPLICATION,
   type PlacedPost,
   type Placement,
@@ -36,6 +38,8 @@ import {
   type PostLocation,
   plotDay,
   postExpired,
+  SHOT_INTERVAL,
+  type ShotPath,
 } from './presence-protocol';
 import { loadProfile } from '../data/profile';
 import { fetchOnce } from '../data/query';
@@ -48,7 +52,10 @@ import {
   type FallingPost,
   facingNotice,
 } from './renderer';
+import { bindSeaplane } from './seaplane';
+import { SHOT_EFFECT_DURATION, type ShotEffect } from './shot-effects';
 import {
+  DOCK,
   ground,
   noise,
   SPAWN,
@@ -108,13 +115,22 @@ const playgroundLikes = new Set<string>();
 const roomStatus = element('room-status');
 const kingStatus = element('king-status');
 const kingSizeButton = element<HTMLButtonElement>('king-size');
+const kingControls = element('king-controls');
+const touchShoot = element('touch-shoot');
+const touchJump = element('touch-jump');
+const jumpHint = element('jump-hint');
 const welcomeIdentity = element<HTMLFormElement>('welcome-identity');
 const welcomeName = element<HTMLInputElement>('welcome-name');
 const welcomeError = element('welcome-error');
 const enterButton = element<HTMLButtonElement>('enter-world');
+let sharedCrown: LocalCrown | undefined;
+let soloCrown: ReturnType<typeof createCrown> | undefined;
 let kingMode = false;
 let kingScale: KingScale = DEFAULT_KING_SCALE;
+let nextShot = 0;
 let avatarName: string | undefined;
+const gunAudio = createGunAudio();
+let shotEffects: ShotEffect[] = [];
 const presence = createPresence(
   () => ({
     ...view,
@@ -127,45 +143,28 @@ const presence = createPresence(
     if (Math.hypot(view.x - SPAWN.x, view.z - SPAWN.z) > 0.25) return;
     player.reset({ ...spawnView(slot), yaw: view.yaw, pitch: view.pitch });
   },
-  (label) => {
+  (label, solo) => {
     roomStatus.hidden = false;
     roomStatus.textContent = label;
+    soloCrown = solo ? createCrown() : undefined;
   },
   updatePlots,
   updatePlacements,
-  async (nonce) => {
-    const activeClient = client;
-    const pair = activeClient?.currentKeyPair;
-    if (activeClient?.activeIdentityKey !== KING_IDENTITY || !pair) return;
-    const signature = await activeClient.cryptoManager.sign(
-      pair.privateKey.key,
-      kingChallenge(nonce),
-      pair.keyType,
-    );
-    if (
-      activeClient.activeIdentityKey !== KING_IDENTITY ||
-      activeClient.currentKeyPair !== pair
-    )
-      return;
-    return {
-      key: bytesToHex(pair.publicKey.key),
-      proof: bytesToHex(signature),
-    };
+  (crown) => {
+    sharedCrown = crown;
   },
-  (crowned) => {
-    kingStatus.textContent =
-      crowned && kingMode ? 'King Mode · Crowned' : 'King Mode';
+  showGunshot,
+  (slot) => {
+    boat.reset();
+    plane.reset();
+    player.reset(spawnView(slot));
+    announce('You respawned at the harbor.');
   },
 );
-const mobile = bindMobileControls(game, world, {
-  hasStarted: () => entered && !chatPanel.open && !connectPanel.open,
-  handleLook,
-  jump: jumpOnce,
-  openChat: () => void openChat(),
-});
 let renderer: ReturnType<typeof createRenderer> | undefined;
 let entered = false;
 let dragging = false;
+let dragDistance = 0;
 let busy = false;
 let notices: PostNotice[] = [];
 let focusedNotice: PostNotice | undefined;
@@ -179,6 +178,111 @@ let resumePointer = false;
 let resumeChat = false;
 let openingReply = false;
 let plotsDay: string | undefined;
+
+const controls = createControls({
+  status() {
+    const crown = soloCrown?.state ?? sharedCrown;
+    return {
+      entered,
+      position: { x: view.x, y: view.y - EYE_HEIGHT, z: view.z },
+      aim: {
+        yaw:
+          (Math.atan2(Math.sin(view.yaw), Math.cos(view.yaw)) * 180) / Math.PI,
+        pitch: (view.pitch * 180) / Math.PI,
+      },
+      room: roomStatus.textContent,
+      king: kingMode ? { size: kingScale, time: kingStatus.textContent } : null,
+      crown: crown && 'location' in crown ? crown.location : null,
+      boat: { available: boat.available, aboard: boat.aboard, ...boat.pose },
+      plane: {
+        available: plane.available,
+        aboard: plane.aboard,
+        ...plane.status,
+      },
+      players: presence
+        .avatars(performance.now())
+        .map(({ id, name, x, y, z, king }) => ({
+          id,
+          name,
+          x,
+          y,
+          z,
+          king: king === true,
+        })),
+      notice: focusedNotice
+        ? {
+            description: focusedNotice.description,
+            liked: likeButton.getAttribute('aria-pressed') === 'true',
+          }
+        : null,
+      dialog: connectPanel.open ? 'identity' : chatPanel.open ? 'chat' : null,
+      scenes: playground?.sceneNames,
+    };
+  },
+  enter(capturePointer, useDisplayName) {
+    if (busy) return false;
+    if (useDisplayName && !isPlayground)
+      return enterFromWelcome(capturePointer);
+    return enter(capturePointer);
+  },
+  beginMovement() {
+    if (!renderer || chatPanel.open || connectPanel.open) return false;
+    return entered || enter(false);
+  },
+  look(yaw, pitch) {
+    if (
+      entered &&
+      !chatPanel.open &&
+      !connectPanel.open &&
+      !plane.aboard &&
+      !playground?.replaying
+    )
+      player.look((yaw * Math.PI) / 180, (pitch * Math.PI) / 180);
+  },
+  jump: jumpOnce,
+  shoot: shootOnce,
+  size: cycleKingScale,
+  boat: () => boat.toggle(),
+  plane: () => plane.toggle(),
+  'plane-pitch': (amount) => plane.pitch(amount),
+  page: (direction) => turnPage(direction === 'previous'),
+  like: toggleLike,
+  reply: replyToNotice,
+  thread() {
+    if (!focusedNotice || thread.hidden) return false;
+    window.open(thread.href, '_blank', 'noopener');
+    return true;
+  },
+  chat: () => openChat(),
+  close() {
+    const dialog = connectPanel.open
+      ? connectPanel
+      : chatPanel.open
+        ? chatPanel
+        : undefined;
+    if (!dialog) return false;
+    closePanel(dialog);
+    return true;
+  },
+  draft(text) {
+    if (!chatPanel.open || chatForm.hidden || draft.readOnly) return false;
+    draft.value = text.slice(0, draft.maxLength);
+    return true;
+  },
+  publish: submitDraft,
+  identity: openIdentity,
+  'create-name': createDisplayName,
+  refresh: loadPosts,
+  fullscreen: () => mobile.toggleFullscreen(),
+  scene: (name, replay) => playground?.loadScene(name, replay) ?? false,
+  'join-tab': () => playground?.joinTab() ?? false,
+});
+const touchControls = controls.from('touch');
+const mobile = bindMobileControls(game, world, {
+  hasStarted: () => entered && !chatPanel.open && !connectPanel.open,
+  run: touchControls,
+});
+
 type WorldPost = {
   notice: PostNotice;
   drop: FallingPost;
@@ -458,15 +562,7 @@ function updateAvatarName(activeClient: PolycentricClient) {
   connectIdentity.textContent = identity
     ? 'Switch Harbor identity'
     : 'Connect Harbor identity';
-  kingMode = identity === KING_IDENTITY && !!activeClient.currentKeyPair;
-  kingStatus.hidden = !kingMode;
   updateLikeButton();
-  kingSizeButton.hidden = !kingMode;
-  if (!kingMode) setKingScale(DEFAULT_KING_SCALE);
-  if (!kingMode) kingStatus.textContent = 'King Mode';
-  void presence
-    .proveKing()
-    .catch((error) => console.warn('Could not verify King Mode:', error));
   avatarName = identity
     ? displayName(latestLocalProfile(activeClient, identity)?.name)
     : undefined;
@@ -560,7 +656,8 @@ function capture() {
 }
 
 function enter(captureMouse: boolean) {
-  if (!renderer) return;
+  if (!renderer) return false;
+  gunAudio.unlock();
   if (!entered) presence.join();
   entered = true;
   welcome.hidden = true;
@@ -568,6 +665,7 @@ function enter(captureMouse: boolean) {
   if (document.activeElement instanceof HTMLButtonElement)
     document.activeElement.blur();
   if (captureMouse) capture();
+  return true;
 }
 
 function pause(dialog: HTMLDialogElement) {
@@ -577,6 +675,7 @@ function pause(dialog: HTMLDialogElement) {
   }
   dragging = false;
   keys.clear();
+  controls.release();
   mobile.reset();
   dialog.showModal();
 }
@@ -757,8 +856,8 @@ async function publish(
   });
 }
 
-chatForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
+async function submitDraft() {
+  if (isPlayground || !chatPanel.open) return;
   const activeClient = client;
   const text = draft.value.trim();
   if (!activeClient?.activeIdentityKey || busy || (!pending && !text)) return;
@@ -830,12 +929,11 @@ chatForm.addEventListener('submit', async (event) => {
     busy = false;
     if (chatPanel.open) showComposer();
   }
-});
+}
 
-identityForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const name = identityName.value.trim();
-  if (!client || busy || !name) return;
+async function createDisplayName(text: string) {
+  const name = text.trim();
+  if (isPlayground || !chatPanel.open || !client || busy || !name) return;
   busy = true;
   showComposer();
   report('Creating your Harbor identity…');
@@ -852,12 +950,21 @@ identityForm.addEventListener('submit', async (event) => {
     busy = false;
     if (chatPanel.open) showComposer();
   }
-});
+}
 
+chatForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void controls.run('publish');
+});
+identityForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void controls.run('create-name', identityName.value);
+});
+draft.addEventListener('input', () => controls.run('draft', draft.value));
 draft.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
   event.preventDefault();
-  if (!event.repeat) chatForm.requestSubmit();
+  if (!event.repeat) void controls.run('publish');
 });
 
 chatPanel.addEventListener('close', () => {
@@ -873,13 +980,16 @@ chatPanel.addEventListener('close', () => {
 for (const button of document.querySelectorAll<HTMLButtonElement>(
   '[data-close]',
 )) {
-  button.addEventListener('click', () => {
-    const dialog = button.closest('dialog');
-    if (dialog) closePanel(dialog);
+  button.addEventListener('click', () => controls.run('close'));
+}
+for (const dialog of [chatPanel, connectPanel]) {
+  dialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    controls.run('close');
   });
 }
 function openIdentity() {
-  if (connectPanel.open) return;
+  if (isPlayground || connectPanel.open) return;
   resumeChat = chatPanel.open;
   if (resumeChat) closePanel(chatPanel, false);
   pause(connectPanel);
@@ -893,21 +1003,26 @@ bindIdentityDialog(connectPanel, (connectedClient) => {
   if (resumeChat) void openChat(replyTo);
   else announce('Harbor identity connected.');
 });
-connectIdentity.addEventListener('click', openIdentity);
-element('existing-identity').addEventListener('click', openIdentity);
-refresh.addEventListener('click', () => void loadPosts());
+connectIdentity.addEventListener('click', () => controls.run('identity'));
+element('existing-identity').addEventListener('click', () =>
+  controls.run('identity'),
+);
+refresh.addEventListener('click', () => void controls.run('refresh'));
 kingSizeButton.addEventListener('click', (event) => {
-  cycleKingScale();
+  controls.run('size');
   if (event.detail > 0) kingSizeButton.blur();
 });
-pageButton.addEventListener('click', () => turnPage());
-likeButton.addEventListener('click', () => void toggleLike());
-async function enterFromWelcome() {
+pageButton.addEventListener('click', () => controls.run('page', 'next'));
+likeButton.addEventListener('click', () => void controls.run('like'));
+thread.addEventListener('click', (event) => {
+  event.preventDefault();
+  controls.run('thread');
+});
+async function enterFromWelcome(capturePointer: boolean) {
   if (busy) return;
   const name = welcomeName.value.trim();
   if (!name || client?.activeIdentityKey) {
-    enter(!game.classList.contains('touch-input'));
-    return;
+    return enter(capturePointer);
   }
   busy = true;
   enterButton.disabled = true;
@@ -918,7 +1033,7 @@ async function enterFromWelcome() {
     client = await getClient();
     if (!client.activeIdentityKey) await createIdentity(client, name);
     updateAvatarName(client);
-    enter(false);
+    return enter(false);
   } catch (error) {
     console.error('Could not create a Harbor identity:', error);
     welcomeError.textContent =
@@ -930,43 +1045,87 @@ async function enterFromWelcome() {
   }
 }
 
-enterButton.addEventListener('click', () => void enterFromWelcome());
+function joinFromWelcome() {
+  void controls.run('enter', !game.classList.contains('touch-input'), true);
+}
+enterButton.addEventListener('click', joinFromWelcome);
 welcomeIdentity.addEventListener('submit', (event) => {
   event.preventDefault();
-  void enterFromWelcome();
+  joinFromWelcome();
 });
-element('open-chat').addEventListener('click', () => void openChat());
-element('reply').addEventListener('click', replyToNotice);
+element('open-chat').addEventListener('click', () => void controls.run('chat'));
+element('reply').addEventListener('click', () => controls.run('reply'));
 world.addEventListener('click', (event) => {
+  if (busy) return;
   const mouse = event.pointerType
     ? event.pointerType === 'mouse'
     : !game.classList.contains('touch-input');
-  if (!busy && (!entered || mouse)) enter(mouse);
+  if (mouse && entered) {
+    const locked = document.pointerLockElement === world;
+    if (locked || (kingMode && dragDistance < 5)) controls.run('shoot');
+    if (locked || dragDistance >= 5) return;
+  }
+  if (!entered || mouse) controls.run('enter', mouse, false);
 });
 world.addEventListener('pointerdown', (event) => {
-  if (event.pointerType === 'mouse')
-    dragging = entered && document.pointerLockElement !== world;
+  if (event.pointerType !== 'mouse' || event.button !== 0) return;
+  dragDistance = 0;
+  dragging = entered && document.pointerLockElement !== world;
 });
 window.addEventListener('pointerup', () => {
   dragging = false;
 });
 window.addEventListener('blur', () => {
   keys.clear();
+  controls.release();
   dragging = false;
   openingReply = false;
   mobile.reset();
 });
 document.addEventListener('pointerlockchange', () => {
-  if (document.pointerLockElement !== world) keys.clear();
-  else resumePointer = false;
+  if (document.pointerLockElement === world) {
+    resumePointer = false;
+    return;
+  }
+  keys.clear();
+  controls.run('stop');
+  controls.run('ascend', false);
 });
-function handleLook(deltaX: number, deltaY: number) {
-  if (!playground?.replaying) player.look(deltaX * 0.00245, -deltaY * 0.00245);
-}
 
 function setKingScale(scale: KingScale) {
   kingScale = scale;
   kingSizeButton.textContent = `Size ${scale}×`;
+}
+
+function updateCrown(time: number) {
+  if (!entered) return undefined;
+  soloCrown?.update(time, [
+    { id: 1, x: view.x, y: view.y - EYE_HEIGHT, z: view.z },
+  ]);
+  const crown = soloCrown?.state ?? sharedCrown;
+  const seconds =
+    crown && 'expiresAt' in crown
+      ? Math.ceil((crown.expiresAt - time) / 1000)
+      : 0;
+  const crowned = seconds > 0;
+  if (crowned !== kingMode) {
+    kingMode = crowned;
+    kingStatus.hidden = !crowned;
+    kingSizeButton.hidden = !crowned;
+    kingControls.hidden = !crowned;
+    touchShoot.hidden = !crowned;
+    touchJump.textContent = crowned ? 'Rise' : 'Jump';
+    jumpHint.textContent = crowned ? 'Hold to ascend' : 'Jump';
+    setKingScale(DEFAULT_KING_SCALE);
+    announce(crowned ? 'You found the crown!' : 'Your reign has ended.');
+  }
+  if (crowned) {
+    const countdown =
+      seconds === 60 ? '1:00' : `0:${String(seconds).padStart(2, '0')}`;
+    const label = `King Mode · ${countdown}`;
+    if (kingStatus.textContent !== label) kingStatus.textContent = label;
+  }
+  return crown && 'location' in crown ? crown.location : undefined;
 }
 
 function cycleKingScale() {
@@ -976,9 +1135,40 @@ function cycleKingScale() {
     );
 }
 
+function shootOnce() {
+  const now = performance.now();
+  if (
+    !entered ||
+    !kingMode ||
+    chatPanel.open ||
+    connectPanel.open ||
+    playground?.replaying ||
+    plane.aboard ||
+    now < nextShot
+  )
+    return;
+  nextShot = now + SHOT_INTERVAL;
+  gunAudio.unlock();
+  if (
+    !presence.shoot({ yaw: view.yaw, pitch: view.pitch, kingScale }) &&
+    soloCrown
+  )
+    showGunshot(undefined, true);
+}
+
+function showGunshot(
+  path: ShotPath | undefined,
+  ownShot: boolean,
+  line?: number,
+) {
+  shotEffects.push({ at: performance.now() / 1000, path, ownShot });
+  gunAudio.play(line);
+}
+
 function jumpOnce() {
   if (
     !playground?.replaying &&
+    !plane.aboard &&
     entered &&
     !chatPanel.open &&
     !connectPanel.open
@@ -989,7 +1179,12 @@ function jumpOnce() {
 
 document.addEventListener('mousemove', (event) => {
   if (document.pointerLockElement !== world && !dragging) return;
-  handleLook(event.movementX, event.movementY);
+  if (dragging) dragDistance += Math.hypot(event.movementX, event.movementY);
+  controls.run(
+    'look',
+    event.movementX * POINTER_DEGREES,
+    -event.movementY * POINTER_DEGREES,
+  );
 });
 window.addEventListener('keydown', (event) => {
   if (openingReply && event.code === 'KeyR' && event.repeat) {
@@ -1016,41 +1211,89 @@ window.addEventListener('keydown', (event) => {
     return;
   if (event.key === 'Enter') {
     event.preventDefault();
-    if (!event.repeat) void openChat();
+    if (!event.repeat) void controls.run('chat');
     return;
   }
   if (entered && kingMode && event.code === 'KeyK') {
     event.preventDefault();
-    if (!event.repeat) cycleKingScale();
+    if (!event.repeat) controls.run('size');
     return;
   }
   if (entered && event.code === 'Space') {
     event.preventDefault();
-    if (!event.repeat) jumpOnce();
+    if (!event.repeat) {
+      controls.run('ascend', true);
+      controls.run('jump');
+    }
+    return;
+  }
+  if (boat.available && event.code === 'KeyF') {
+    event.preventDefault();
+    if (!event.repeat) controls.run('boat');
+    return;
+  }
+  if (plane.available && event.code === 'KeyG') {
+    event.preventDefault();
+    if (!event.repeat) controls.run('plane');
     return;
   }
   if (focusedNotice && ['KeyE', 'KeyR', 'KeyT', 'KeyL'].includes(event.code)) {
     event.preventDefault();
     if (event.repeat) return;
-    if (event.code === 'KeyE') turnPage(event.shiftKey);
+    if (event.code === 'KeyE')
+      controls.run('page', event.shiftKey ? 'previous' : 'next');
     if (event.code === 'KeyR') {
       openingReply = true;
-      replyToNotice();
+      controls.run('reply');
     }
-    if (event.code === 'KeyT') thread.click();
-    if (event.code === 'KeyL') void toggleLike();
+    if (event.code === 'KeyT') controls.run('thread');
+    if (event.code === 'KeyL') void controls.run('like');
     return;
   }
   if (!renderer || !movement.includes(event.code)) return;
   event.preventDefault();
-  if (!entered) enter(false);
-  keys.add(event.code);
+  if (!keys.has(event.code)) {
+    keys.add(event.code);
+    moveWithKeys();
+  }
 });
 window.addEventListener('keyup', (event) => {
+  if (event.code === 'Space') controls.run('ascend', false);
   if (event.code === 'KeyR') openingReply = false;
-  keys.delete(event.code);
+  if (keys.delete(event.code)) moveWithKeys();
 });
 
+function moveWithKeys() {
+  controls.run(
+    'move',
+    Number(keys.has('KeyW')) - Number(keys.has('KeyS')),
+    Number(keys.has('KeyD')) - Number(keys.has('KeyA')),
+    Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft')),
+    Number(keys.has('ArrowUp')) - Number(keys.has('ArrowDown')),
+    0,
+  );
+}
+
+function canUseVehicles() {
+  return (
+    entered && !chatPanel.open && !connectPanel.open && !playground?.replaying
+  );
+}
+
+const boat = bindBoat(
+  player,
+  game,
+  () => !plane.aboard && canUseVehicles(),
+  () => touchControls('boat'),
+);
+const plane = bindSeaplane(
+  player,
+  game,
+  () => !boat.aboard && canUseVehicles(),
+  () => touchControls('plane'),
+  (amount) => touchControls('plane-pitch', amount),
+  announce,
+);
 const map = element<HTMLCanvasElement>('minimap');
 const mapContext = map.getContext('2d');
 const mapTerrain = document.createElement('canvas');
@@ -1079,6 +1322,15 @@ for (let y = 0; y < map.height; y += 2) {
             : `hsl(73 20% ${24 + land * 0.55 + n * 5}%)`;
     mapBase.fillRect(x, y, 2, 2);
   }
+}
+if (mapBase) {
+  mapBase.fillStyle = '#ac8554';
+  mapBase.fillRect(
+    (DOCK.start - mapX) * mapScale,
+    (DOCK.z - DOCK.halfWidth - mapZ) * mapScale,
+    (DOCK.end - DOCK.start) * mapScale,
+    DOCK.halfWidth * 2 * mapScale,
+  );
 }
 const coordinates = element('coordinates');
 const compassTrack = element('compass-track');
@@ -1126,6 +1378,13 @@ function drawHud(avatars: readonly Avatar[] = []) {
     mapContext.fillStyle = `rgb(${tint.join(',')})`;
     mapContext.fillRect(x - 1, y - 1, 3, 3);
   }
+  mapContext.fillStyle = '#a7d8d0';
+  mapContext.fillRect(
+    Math.round((boat.pose.x - mapX) * mapScale) - 1,
+    Math.round((boat.pose.z - mapZ) * mapScale) - 1,
+    3,
+    3,
+  );
   mapContext.save();
   mapContext.translate(
     Math.round((view.x - mapX) * mapScale),
@@ -1166,38 +1425,36 @@ function start() {
     const dt = Math.min(0.05, (time - previous) / 1000);
     previous = time;
     const exploring = entered && !chatPanel.open && !connectPanel.open;
+    const crown = updateCrown(time);
     const collisions = {
       obstacles: renderer.obstacles,
       stationCount: notices.length,
     };
-    if (!exploring || !playground?.step(time, collisions)) {
-      player.step(
-        time,
-        dt,
-        exploring
-          ? {
-              forward:
-                Number(keys.has('KeyW')) -
-                Number(keys.has('KeyS')) +
-                mobile.movement.forward,
-              sideways:
-                Number(keys.has('KeyD')) -
-                Number(keys.has('KeyA')) +
-                mobile.movement.sideways,
-              turn:
-                Number(keys.has('ArrowRight')) - Number(keys.has('ArrowLeft')),
-              look: Number(keys.has('ArrowUp')) - Number(keys.has('ArrowDown')),
-            }
-          : undefined,
-        collisions,
-      );
+    const movementInput = exploring
+      ? { ...controls.movement(time), ascend: kingMode && controls.ascending }
+      : undefined;
+    const flying = plane.step(dt, movementInput, collisions.obstacles);
+    const boating = boat.step(dt, movementInput);
+    if (
+      !flying &&
+      !boating &&
+      (!exploring || !playground?.step(time, collisions, kingMode))
+    ) {
+      player.step(time, dt, movementInput, collisions);
     }
     const extraEyeHeight = kingMode ? EYE_HEIGHT * (kingScale - 1) : 0;
-    const camera = { ...view, y: view.y + extraEyeHeight };
+    const camera = plane.aboard
+      ? plane.camera()
+      : { ...view, y: view.y + extraEyeHeight };
     const seconds = time / 1000;
-    const noticeIndex = exploring ? facingNotice(camera, notices.length) : -1;
+    if (shotEffects.length)
+      shotEffects = shotEffects.filter(
+        ({ at }) => seconds - at < SHOT_EFFECT_DURATION,
+      );
+    const reading = exploring && !boat.aboard && !plane.aboard;
+    const noticeIndex = reading ? facingNotice(camera, notices.length) : -1;
     focusNotice(
-      exploring
+      reading
         ? (facingPlacement(camera, seconds) ?? notices[noticeIndex])
         : undefined,
     );
@@ -1207,7 +1464,11 @@ function start() {
       seconds,
       avatars,
       [...worldPosts.values()].map(({ drop }) => drop),
-      entered && kingMode,
+      crown,
+      entered && kingMode && !plane.aboard,
+      boat.pose,
+      plane.pose,
+      shotEffects,
     );
     drawHud(avatars);
   }
@@ -1217,25 +1478,28 @@ function start() {
 async function boot() {
   if (import.meta.env.DEV && import.meta.env.MODE === 'playground') {
     const { setupPlayground } = await import('./playground');
-    playground = setupPlayground(player, game, (enabled) => {
-      kingMode = enabled;
-      kingStatus.hidden = !enabled;
-      kingSizeButton.hidden = !enabled;
-      setKingScale(DEFAULT_KING_SCALE);
-    });
+    playground = setupPlayground(player, game, controls.run);
     welcomeIdentity.hidden = true;
     connectIdentity.hidden = true;
     thread.hidden = true;
     refresh.disabled = true;
-    element('welcome-copy').textContent = 'Explore with a sample Harbor feed.';
+    element('welcome-copy').textContent =
+      'Explore with a sample Harbor feed. Find the crown to become King for one minute.';
     markNetwork('loading', 'PLAYGROUND', 'Waiting for the sample feed');
   }
   start();
+  if (import.meta.env.DEV && import.meta.env.MODE === 'playground') {
+    const { connectControlBridge } = await import('./control-bridge');
+    connectControlBridge(controls);
+  }
   void loadPosts();
 }
 
 void boot();
 
+window.addEventListener('pagehide', () => {
+  soloCrown = undefined;
+});
 window.setInterval(retryPlacements, 1500);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) retryPlacements();

@@ -1,20 +1,24 @@
+import { SEAPLANE_BOARDING } from './flight.ts';
 import {
   type CollisionScene,
   type createPlayerMovement,
   EYE_HEIGHT,
 } from './movement.ts';
-import { ground, STATIONS } from './terrain.ts';
+import { DOCK, ground, SPAWN, STATIONS } from './terrain.ts';
 
 type Segment = {
   frames: number;
   forward?: number;
   sideways?: number;
   jump?: boolean;
+  ascend?: boolean;
 };
 type Scenario = {
   label: string;
   x: number;
   z: number;
+  floor?: number;
+  yaw?: number;
   stations?: number;
   king?: boolean;
   segments: readonly Segment[];
@@ -23,6 +27,23 @@ type Scenario = {
 const [boardX, boardZ] = STATIONS[0];
 
 export const scenarios = {
+  shooting: {
+    label: 'Practice King Mode',
+    ...SPAWN,
+    segments: [],
+  },
+  dock: {
+    label: 'Visit the harbor dock',
+    x: DOCK.start - 0.5,
+    z: DOCK.z,
+    yaw: Math.PI / 2,
+    segments: [],
+  },
+  seaplane: {
+    label: 'Fly the harbor seaplane',
+    ...SEAPLANE_BOARDING,
+    segments: [],
+  },
   noticeboard: {
     label: 'Read a noticeboard',
     x: boardX,
@@ -44,6 +65,18 @@ export const scenarios = {
     x: -73.04,
     z: -96.5,
     segments: [{ frames: 4, sideways: -1 }],
+  },
+  'ledge-drop': {
+    label: 'Walk off a three-block ledge',
+    x: -70.5,
+    z: -93.5,
+    segments: [{ frames: 13, sideways: 1 }, { frames: 42 }],
+  },
+  'king-ascent': {
+    label: 'Hold King ascent, then release',
+    ...SPAWN,
+    king: true,
+    segments: [{ frames: 120, ascend: true }, { frames: 100 }],
   },
   tree: {
     label: 'Escape a tree and walk back into it',
@@ -100,8 +133,13 @@ export function scenarioByName(name: string): Scenario | undefined {
     : undefined;
 }
 
-export function scenarioView({ x, z }: Scenario) {
-  return { x, y: ground(x, z) + EYE_HEIGHT, z, yaw: 0, pitch: 0 };
+export function scenarioView({
+  x,
+  z,
+  floor = ground(x, z),
+  yaw = 0,
+}: Scenario) {
+  return { x, y: floor + EYE_HEIGHT, z, yaw, pitch: 0 };
 }
 
 export function* replayScenario(
@@ -122,6 +160,7 @@ export function* replayScenario(
         {
           forward: segment.forward ?? 0,
           sideways: segment.sideways ?? 0,
+          ascend: scenario.king && segment.ascend,
         },
         scene,
       );

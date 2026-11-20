@@ -1,6 +1,10 @@
 import {
+  CROWN_DURATION,
+  type CrownLocation,
   displayName,
+  HIT_LINES,
   isPose,
+  isShotPath,
   isPlacedPost,
   parseMessage,
   PRESENCE_INTERVAL,
@@ -15,9 +19,12 @@ import {
   readKingScale,
   type KingScale,
   ROOM_CAPACITY,
+  type Shoot,
+  type ShotPath,
 } from './presence-protocol';
 
 export type Avatar = NamedPose & { id: number; walking: boolean; king?: true };
+export type LocalCrown = { location: CrownLocation } | { expiresAt: number };
 
 type Track = {
   from: Pose;
@@ -50,16 +57,24 @@ function isPlayerId(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
+function isSlot(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value < ROOM_CAPACITY
+  );
+}
+
 export function createPresence(
   readPose: () => NamedPose,
   onJoin: (slot: number) => void,
-  onStatus: (label: string) => void,
+  onStatus: (label: string, solo: boolean) => void,
   onPlots: (snapshot: PlotSnapshot) => void,
   onPlacements: (update: PlacementUpdate) => void,
-  getKingProof: (
-    nonce: string,
-  ) => Promise<{ key: string; proof: string } | undefined>,
-  onKing: (enabled: boolean) => void,
+  onCrown: (crown: LocalCrown | undefined) => void,
+  onGunshot: (path: ShotPath, ownShot: boolean, line?: number) => void,
+  onRespawn: (slot: number) => void,
 ) {
   const session = Array.from(
     crypto.getRandomValues(new Uint8Array(16)),
@@ -73,13 +88,13 @@ export function createPresence(
   let started = false;
   let available = false;
   let id: number | undefined;
-  let nonce: string | undefined;
+  let spawnRevision = 0;
   let lastStatus = '';
 
-  function status(value: string) {
+  function status(value: string, solo = false) {
     if (lastStatus === value) return;
     lastStatus = value;
-    onStatus(value);
+    onStatus(value, solo);
   }
 
   function sendPose(connection: WebSocket) {
@@ -97,24 +112,29 @@ export function createPresence(
         name,
         chat,
         kingScale,
+        spawnRevision,
         yaw: Math.atan2(Math.sin(yaw), Math.cos(yaw)),
       }),
     );
   }
 
-  async function proveKing() {
-    const connection = socket;
-    const challenge = nonce;
-    if (!connection || !challenge || connection.readyState !== WebSocket.OPEN)
-      return;
-    const proof = await getKingProof(challenge);
-    if (socket !== connection || connection.readyState !== WebSocket.OPEN)
-      return;
-    connection.send(
-      JSON.stringify(
-        proof ? { type: 'king', ...proof } : { type: 'king', enabled: false },
-      ),
-    );
+  function respawn(value: unknown) {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      !('id' in value) ||
+      value.id !== id ||
+      !('slot' in value) ||
+      !isSlot(value.slot) ||
+      !('spawnRevision' in value) ||
+      typeof value.spawnRevision !== 'number' ||
+      !Number.isSafeInteger(value.spawnRevision) ||
+      value.spawnRevision <= spawnRevision
+    )
+      return false;
+    spawnRevision = value.spawnRevision;
+    onRespawn(value.slot);
+    return true;
   }
 
   function open() {
@@ -138,30 +158,54 @@ export function createPresence(
         'id' in message &&
         isPlayerId(message.id) &&
         'slot' in message &&
-        typeof message.slot === 'number' &&
-        Number.isInteger(message.slot) &&
-        message.slot >= 0 &&
-        message.slot < ROOM_CAPACITY
+        isSlot(message.slot)
       ) {
         id = message.id;
-        nonce =
-          'nonce' in message &&
-          typeof message.nonce === 'string' &&
-          /^[a-f0-9]{64}$/.test(message.nonce)
-            ? message.nonce
-            : undefined;
         attempts = 0;
-        if (!available) onJoin(message.slot);
+        if (
+          !respawn('respawn' in message ? message.respawn : undefined) &&
+          !available
+        )
+          onJoin(message.slot);
         available = true;
         status('1 player online');
         sendPose(connection);
-        void proveKing().catch((error) =>
-          console.warn('Could not verify King Mode:', error),
-        );
         sendTimer = window.setInterval(
           () => sendPose(connection),
           PRESENCE_INTERVAL,
         );
+        return;
+      }
+
+      if (
+        id !== undefined &&
+        message.type === 'gunshot' &&
+        'shooter' in message &&
+        isPlayerId(message.shooter) &&
+        'path' in message &&
+        isShotPath(message.path)
+      ) {
+        const hit = 'hit' in message ? message.hit : undefined;
+        let line: number | undefined;
+        if (
+          hit &&
+          typeof hit === 'object' &&
+          'id' in hit &&
+          isPlayerId(hit.id)
+        ) {
+          tracks.delete(hit.id);
+          if (
+            'line' in hit &&
+            typeof hit.line === 'number' &&
+            Number.isInteger(hit.line) &&
+            hit.line >= 0 &&
+            hit.line < HIT_LINES.length
+          )
+            line = hit.line;
+          if (hit.id === id && 'respawn' in hit && respawn(hit.respawn))
+            sendPose(connection);
+        }
+        onGunshot(message.path, message.shooter === id, line);
         return;
       }
 
@@ -181,15 +225,6 @@ export function createPresence(
               ? message.live
               : undefined,
         });
-        return;
-      }
-      if (
-        id !== undefined &&
-        message.type === 'king' &&
-        'enabled' in message &&
-        typeof message.enabled === 'boolean'
-      ) {
-        onKing(message.enabled);
         return;
       }
       if (
@@ -217,7 +252,34 @@ export function createPresence(
       )
         return;
       const now = performance.now();
+      const crown = 'crown' in message ? message.crown : undefined;
+      if (
+        crown &&
+        typeof crown === 'object' &&
+        'x' in crown &&
+        typeof crown.x === 'number' &&
+        Number.isFinite(crown.x) &&
+        'z' in crown &&
+        typeof crown.z === 'number' &&
+        Number.isFinite(crown.z)
+      ) {
+        onCrown({ location: { x: crown.x, z: crown.z } });
+      } else if (
+        crown &&
+        typeof crown === 'object' &&
+        'holder' in crown &&
+        crown.holder === id &&
+        'remainingMs' in crown &&
+        typeof crown.remainingMs === 'number' &&
+        crown.remainingMs > 0 &&
+        crown.remainingMs <= CROWN_DURATION
+      ) {
+        onCrown({ expiresAt: now + crown.remainingMs });
+      } else {
+        onCrown(undefined);
+      }
       const present = new Set<number>();
+      let online = 1;
       for (const player of message.players) {
         if (
           !isPose(player) ||
@@ -234,6 +296,7 @@ export function createPresence(
           previous && distance < 6 ? interpolate(previous, now) : player;
         const king = 'king' in player && player.king === true;
         present.add(player.id);
+        if (!('practice' in player && player.practice === true)) online++;
         tracks.set(player.id, {
           from,
           to: player,
@@ -251,16 +314,14 @@ export function createPresence(
       for (const playerId of tracks.keys()) {
         if (!present.has(playerId)) tracks.delete(playerId);
       }
-      status(
-        tracks.size ? `${tracks.size + 1} players online` : '1 player online',
-      );
+      status(online === 1 ? '1 player online' : `${online} players online`);
     });
 
     connection.addEventListener('close', ({ code }) => {
       if (socket !== connection) return;
       reset();
       if (!available || code === 4001) {
-        status('Solo play');
+        status('Solo play', true);
         return;
       }
       status('Reconnecting…');
@@ -272,8 +333,8 @@ export function createPresence(
   function reset() {
     socket = undefined;
     id = undefined;
-    nonce = undefined;
-    onKing(false);
+    spawnRevision = 0;
+    onCrown(undefined);
     clearInterval(sendTimer);
     clearTimeout(reconnectTimer);
     tracks.clear();
@@ -289,7 +350,13 @@ export function createPresence(
   });
 
   return {
-    proveKing,
+    shoot(aim: Omit<Shoot, 'type'>) {
+      if (id === undefined || socket?.readyState !== WebSocket.OPEN)
+        return false;
+      const yaw = Math.atan2(Math.sin(aim.yaw), Math.cos(aim.yaw));
+      socket.send(JSON.stringify({ ...aim, type: 'shoot', yaw }));
+      return true;
+    },
     place(placement: Placement) {
       if (id === undefined || socket?.readyState !== WebSocket.OPEN)
         return false;

@@ -6,6 +6,9 @@ import { noise } from './terrain';
 
 const WIDTH = 768;
 const HEIGHT = 538;
+// WebGL 1 needs power-of-two textures for mipmaps.
+const TEXTURE_WIDTH = 1024;
+const TEXTURE_HEIGHT = 512;
 const MARGIN = 38;
 const HEADER = 105;
 const FOOTER = 489;
@@ -153,10 +156,12 @@ export class PostNotice {
     private readonly onChange: (notice: PostNotice) => void,
     private readonly options: { card?: boolean; author?: string } = {},
   ) {
-    this.canvas.width = WIDTH;
-    this.canvas.height = HEIGHT;
+    this.canvas.width = TEXTURE_WIDTH;
+    this.canvas.height = TEXTURE_HEIGHT;
+    this.canvas.style.aspectRatio = `${WIDTH} / ${HEIGHT}`;
     const context = this.canvas.getContext('2d');
     if (!context) throw new Error('Could not prepare a Harbor notice.');
+    context.scale(TEXTURE_WIDTH / WIDTH, TEXTURE_HEIGHT / HEIGHT);
     this.context = context;
     this.author = options.author || shortIdentity(post.identity);
     const created = new Date(post.createdAt);

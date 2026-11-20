@@ -1,0 +1,54 @@
+.plane-controls {
+  position: absolute;
+  bottom: max(114px, calc(var(--safe-bottom) + 100px));
+  left: 50%;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.plane-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 12px;
+  color: var(--ink);
+}
+.plane-controls button:disabled {
+  color: var(--soft);
+  cursor: default;
+}
+.boat-controls:not([hidden]) ~ .plane-controls {
+  translate: 0 -52px;
+}
+.plane-pitch {
+  display: none;
+}
+.plane-controls :is(.plane-metrics, .plane-hint) {
+  padding: 4px 8px;
+  color: var(--soft);
+  font-size: 12px;
+}
+.seaplane-aboard .crosshair {
+  visibility: hidden;
+}
+#overworld.seaplane-aboard :is(#touch-jump, #touch-shoot) {
+  display: none;
+}
+.touch-input .plane-controls {
+  bottom: max(82px, calc(var(--safe-bottom) + 72px));
+}
+.touch-input .plane-controls :is(kbd, .plane-hint) {
+  display: none;
+}
+.touch-input .plane-pitch {
+  display: flex;
+  gap: 6px;
+}
+.touch-input .plane-controls button {
+  min-height: 44px;
+  touch-action: none;
+}

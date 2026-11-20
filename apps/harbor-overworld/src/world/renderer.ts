@@ -6,9 +6,18 @@ import {
   gunMesh,
   nameplate,
 } from './avatar';
+import { boatMesh, type BoatPose } from './boat';
+import type { PlanePose } from './flight';
 import type { View } from './movement';
 import type { Avatar } from './presence';
-import { DEFAULT_KING_SCALE } from './presence-protocol';
+import { type CrownLocation, DEFAULT_KING_SCALE } from './presence-protocol';
+import { seaplaneMesh } from './seaplane';
+import {
+  firstPersonFlare,
+  MUZZLE_DURATION,
+  type ShotEffect,
+  shotEffectsMesh,
+} from './shot-effects';
 import {
   ground,
   makeNoticeFaces,
@@ -17,6 +26,7 @@ import {
   NOTICE,
   NOTICE_VERTICES,
   STATIONS,
+  WATER,
 } from './terrain';
 
 export const DROP_DURATION = 1.2;
@@ -24,6 +34,7 @@ export const DROP_HEIGHT = 1.75;
 export const DROP_HALF_WIDTH = 1.25;
 export const DROP_BASE = 0.025;
 const DROP_DRAW_RANGE = 40;
+const MAX_FRAMEBUFFER_PIXELS = 3_000_000;
 
 export type FallingPost = {
   id: string;
@@ -91,6 +102,7 @@ const worldVertex = `
   #ifdef AVATAR
     uniform vec3 avatarOrigin;
     uniform vec2 avatarRotation;
+    uniform vec2 avatarPitch;
     uniform float avatarStep;
     uniform float avatarScale;
   #endif
@@ -102,6 +114,8 @@ const worldVertex = `
         p.z += leg;
         p.y += max(0.0, leg * .42);
       }
+      p.yz = vec2(avatarPitch.x * p.y - avatarPitch.y * p.z,
+                  avatarPitch.y * p.y + avatarPitch.x * p.z);
       p.xz = vec2(avatarRotation.x * p.x - avatarRotation.y * p.z,
                   avatarRotation.y * p.x + avatarRotation.x * p.z);
       p = p * avatarScale + avatarOrigin;
@@ -186,6 +200,22 @@ const noticeFragment = `
   }
 `;
 
+const beaconFragment = `
+  precision highp float;
+  varying vec2 uv;
+  uniform float time;
+  void main() {
+    float height = 1.0 - uv.y;
+    float edge = abs(uv.x * 2.0 - 1.0) / mix(1.0, .68, height);
+    float core = 1.0 - smoothstep(.04, .23, edge);
+    float halo = 1.0 - smoothstep(.05, 1.0, edge);
+    float pulse = pow(.5 + .5 * sin(height * 55.0 - time * 6.0), 4.0);
+    float fade = 1.0 - smoothstep(.69, 1.0, height);
+    vec3 light = mix(vec3(1.0, .55, .14), vec3(1.0, .97, .73), core);
+    gl_FragColor = vec4(light, (halo * .34 + core * (.51 + pulse * .12)) * fade);
+  }
+`;
+
 function compile(gl: WebGLRenderingContext, vertex: string, fragment: string) {
   function shader(type: number, source: string) {
     const result = gl.createShader(type);
@@ -222,6 +252,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const gl = canvas.getContext('webgl', { alpha: false, antialias: false });
   if (!gl) throw new Error('WebGL is unavailable in this browser.');
   const context = gl;
+  const anisotropy = gl.getExtension('EXT_texture_filter_anisotropic');
+  const maxAnisotropy = anisotropy
+    ? Math.min(8, gl.getParameter(anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT))
+    : 1;
   const skyProgram = compile(gl, skyVertex, skyFragment);
   const worldProgram = compile(gl, worldVertex, worldFragment);
   const avatarProgram = compile(
@@ -230,6 +264,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     worldFragment,
   );
   const noticeProgram = compile(gl, noticeVertex, noticeFragment);
+  const beaconProgram = compile(gl, noticeVertex, beaconFragment);
   const { vertices, obstacles } = makeTerrain();
   const screen = gl.createBuffer();
   const terrain = gl.createBuffer();
@@ -249,8 +284,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   }
   const avatarMeshes = COATS.map((_, index) => uploadMesh(avatarMesh(index)));
   const crown = uploadMesh(crownMesh());
+  const crownPickup = uploadMesh(crownMesh(0));
+  const harborBoat = uploadMesh(boatMesh());
+  const harborSeaplane = uploadMesh(seaplaneMesh());
   const heldGun = uploadMesh(gunMesh());
   const firstPersonGun = uploadMesh(gunMesh(true));
+  const firstPersonFlash = uploadMesh(firstPersonFlare());
+  const shotBuffer = gl.createBuffer();
   const noticeTextures: WebGLTexture[] = [];
   let stationVertices = 0;
   gl.bindBuffer(gl.ARRAY_BUFFER, screen);
@@ -277,10 +317,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const avatarUniforms = uniformLocations(avatarProgram);
   const avatarOrigin = gl.getUniformLocation(avatarProgram, 'avatarOrigin');
   const avatarRotation = gl.getUniformLocation(avatarProgram, 'avatarRotation');
+  const avatarPitch = gl.getUniformLocation(avatarProgram, 'avatarPitch');
   const avatarStep = gl.getUniformLocation(avatarProgram, 'avatarStep');
   const avatarScale = gl.getUniformLocation(avatarProgram, 'avatarScale');
   const avatarTime = gl.getUniformLocation(avatarProgram, 'time');
   const noticeUniforms = uniformLocations(noticeProgram);
+  const beaconUniforms = uniformLocations(beaconProgram);
+  const beaconTime = gl.getUniformLocation(beaconProgram, 'time');
+  const beaconPoint = gl.getAttribLocation(beaconProgram, 'point');
+  const beaconUv = gl.getAttribLocation(beaconProgram, 'paperUv');
   const timeUniform = gl.getUniformLocation(worldProgram, 'time');
   const screenPosition = gl.getAttribLocation(skyProgram, 'pos');
   function meshAttributes(program: WebGLProgram) {
@@ -295,7 +340,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const noticePoint = gl.getAttribLocation(noticeProgram, 'point');
   const paperUv = gl.getAttribLocation(noticeProgram, 'paperUv');
 
-  function uploadTexture(texture: WebGLTexture, image: HTMLCanvasElement) {
+  function uploadTexture(
+    texture: WebGLTexture,
+    image: HTMLCanvasElement,
+    mipmapped = false,
+  ) {
     context.bindTexture(context.TEXTURE_2D, texture);
     context.texImage2D(
       context.TEXTURE_2D,
@@ -305,16 +354,17 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       context.UNSIGNED_BYTE,
       image,
     );
+    if (mipmapped) context.generateMipmap(context.TEXTURE_2D);
   }
 
-  function createTexture() {
+  function createTexture(mipmapped = false) {
     const texture = context.createTexture();
     if (!texture) return null;
     context.bindTexture(context.TEXTURE_2D, texture);
     context.texParameteri(
       context.TEXTURE_2D,
       context.TEXTURE_MIN_FILTER,
-      context.LINEAR,
+      mipmapped ? context.LINEAR_MIPMAP_LINEAR : context.LINEAR,
     );
     context.texParameteri(
       context.TEXTURE_2D,
@@ -331,12 +381,18 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       context.TEXTURE_WRAP_T,
       context.CLAMP_TO_EDGE,
     );
+    if (mipmapped && anisotropy)
+      context.texParameterf(
+        context.TEXTURE_2D,
+        anisotropy.TEXTURE_MAX_ANISOTROPY_EXT,
+        maxAnisotropy,
+      );
     return texture;
   }
 
   function setNotice(index: number, image: HTMLCanvasElement) {
     const texture = noticeTextures[index];
-    if (texture) uploadTexture(texture, image);
+    if (texture) uploadTexture(texture, image, true);
   }
 
   function nameTexture(key: string, id: number, name: string) {
@@ -356,7 +412,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     setNotice,
     setDrop(id: string, image: HTMLCanvasElement) {
       const texture = dropTextures.get(id);
-      if (texture) uploadTexture(texture, image);
+      if (texture) uploadTexture(texture, image, true);
     },
     setStations(pages: readonly HTMLCanvasElement[]) {
       const mesh = makeStations(pages.length);
@@ -373,7 +429,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         context.deleteTexture(noticeTextures.pop() ?? null);
       for (const [index, page] of pages.entries()) {
         if (!noticeTextures[index]) {
-          const texture = createTexture();
+          const texture = createTexture(true);
           if (!texture) break;
           noticeTextures.push(texture);
         }
@@ -385,12 +441,23 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       time: number,
       avatars: readonly Avatar[],
       drops: readonly FallingPost[],
+      crownLocation: CrownLocation | undefined,
       showHeldGun: boolean,
+      boat: BoatPose,
+      plane: PlanePose,
+      shots: readonly ShotEffect[],
     ) {
       const gl = context;
-      const height = Math.max(1, Math.min(canvas.clientHeight, 660));
-      const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
-      const width = Math.max(1, Math.round(height * aspect));
+      const cssWidth = Math.max(1, canvas.clientWidth);
+      const cssHeight = Math.max(1, canvas.clientHeight);
+      const aspect = cssWidth / cssHeight;
+      const pixelRatio = Math.min(
+        devicePixelRatio,
+        2,
+        Math.sqrt(MAX_FRAMEBUFFER_PIXELS / (cssWidth * cssHeight)),
+      );
+      const width = Math.max(1, Math.round(cssWidth * pixelRatio));
+      const height = Math.max(1, Math.round(cssHeight * pixelRatio));
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
@@ -439,6 +506,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       mesh(stations, stationVertices, worldAttributes);
       for (const attr of worldAttributes) gl.disableVertexAttribArray(attr);
 
+      const pickupY = crownLocation
+        ? ground(crownLocation.x, crownLocation.z) +
+          0.55 +
+          Math.sin(time * 2.5) * 0.12
+        : 0;
       const visible = avatars.filter((avatar) => {
         const scale = avatarScaleFor(avatar);
         return (
@@ -447,32 +519,52 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           view.y > avatar.y + 1.75 * scale
         );
       });
-      if (visible.length) {
-        gl.useProgram(avatarProgram);
-        camera(avatarUniforms);
-        gl.uniform1f(avatarTime, time);
-        for (const attr of avatarAttributes) gl.enableVertexAttribArray(attr);
-        for (const avatar of visible) {
-          const model = avatarMeshes[coatIndex(avatar.id)];
-          gl.uniform3f(avatarOrigin, avatar.x, avatar.y, avatar.z);
-          gl.uniform1f(avatarScale, avatarScaleFor(avatar));
-          gl.uniform2f(
-            avatarRotation,
-            Math.cos(avatar.yaw),
-            Math.sin(avatar.yaw),
-          );
-          gl.uniform1f(
-            avatarStep,
-            avatar.walking ? Math.sin(time * 14 + avatar.id) * 0.18 : 0,
-          );
-          mesh(model.buffer, model.count, avatarAttributes);
-          if (avatar.king) {
-            mesh(crown.buffer, crown.count, avatarAttributes);
-            mesh(heldGun.buffer, heldGun.count, avatarAttributes);
-          }
-        }
-        for (const attr of avatarAttributes) gl.disableVertexAttribArray(attr);
+      gl.useProgram(avatarProgram);
+      camera(avatarUniforms);
+      gl.uniform1f(avatarTime, time);
+      for (const attr of avatarAttributes) gl.enableVertexAttribArray(attr);
+      gl.uniform1f(avatarScale, 1);
+      gl.uniform1f(avatarStep, 0);
+      gl.uniform3f(avatarOrigin, plane.x, plane.y, plane.z);
+      gl.uniform2f(avatarRotation, Math.cos(plane.yaw), Math.sin(plane.yaw));
+      gl.uniform2f(avatarPitch, Math.cos(plane.pitch), Math.sin(plane.pitch));
+      mesh(harborSeaplane.buffer, harborSeaplane.count, avatarAttributes);
+      gl.uniform2f(avatarPitch, 1, 0);
+      gl.uniform3f(avatarOrigin, boat.x, WATER, boat.z);
+      gl.uniform2f(avatarRotation, Math.cos(boat.yaw), Math.sin(boat.yaw));
+      mesh(harborBoat.buffer, harborBoat.count, avatarAttributes);
+      if (crownLocation) {
+        const { x, z } = crownLocation;
+        gl.uniform3f(avatarOrigin, x, pickupY, z);
+        gl.uniform1f(avatarScale, 2);
+        gl.uniform2f(
+          avatarRotation,
+          Math.cos(time * 1.4),
+          Math.sin(time * 1.4),
+        );
+        gl.uniform1f(avatarStep, 0);
+        mesh(crownPickup.buffer, crownPickup.count, avatarAttributes);
       }
+      for (const avatar of visible) {
+        const model = avatarMeshes[coatIndex(avatar.id)];
+        gl.uniform3f(avatarOrigin, avatar.x, avatar.y, avatar.z);
+        gl.uniform1f(avatarScale, avatarScaleFor(avatar));
+        gl.uniform2f(
+          avatarRotation,
+          Math.cos(avatar.yaw),
+          Math.sin(avatar.yaw),
+        );
+        gl.uniform1f(
+          avatarStep,
+          avatar.walking ? Math.sin(time * 14 + avatar.id) * 0.18 : 0,
+        );
+        mesh(model.buffer, model.count, avatarAttributes);
+        if (avatar.king) {
+          mesh(crown.buffer, crown.count, avatarAttributes);
+          mesh(heldGun.buffer, heldGun.count, avatarAttributes);
+        }
+      }
+      for (const attr of avatarAttributes) gl.disableVertexAttribArray(attr);
 
       const activeNames = new Set<string>();
       for (const avatar of avatars) {
@@ -500,6 +592,57 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       const nearby = visible.filter(
         ({ x, z }) => Math.hypot(x - view.x, z - view.z) < 17,
       );
+      function drawBillboard(
+        x: number,
+        z: number,
+        bottom: number,
+        halfWidth: number,
+        height: number,
+      ) {
+        const leftX = x - cy * halfWidth;
+        const leftZ = z - sy * halfWidth;
+        const rightX = x + cy * halfWidth;
+        const rightZ = z + sy * halfWidth;
+        const top = bottom + height;
+        gl.bufferData(
+          gl.ARRAY_BUFFER,
+          new Float32Array([
+            leftX,
+            bottom,
+            leftZ,
+            0,
+            1,
+            rightX,
+            bottom,
+            rightZ,
+            1,
+            1,
+            rightX,
+            top,
+            rightZ,
+            1,
+            0,
+            leftX,
+            bottom,
+            leftZ,
+            0,
+            1,
+            rightX,
+            top,
+            rightZ,
+            1,
+            0,
+            leftX,
+            top,
+            leftZ,
+            0,
+            0,
+          ]),
+          gl.DYNAMIC_DRAW,
+        );
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+
       if (noticeTextures.length || nearby.length || visibleDrops.length) {
         gl.useProgram(noticeProgram);
         camera(noticeUniforms);
@@ -524,49 +667,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           halfWidth: number,
           height: number,
         ) {
-          const leftX = x - cy * halfWidth;
-          const leftZ = z - sy * halfWidth;
-          const rightX = x + cy * halfWidth;
-          const rightZ = z + sy * halfWidth;
-          const top = bottom + height;
-          gl.bufferData(
-            gl.ARRAY_BUFFER,
-            new Float32Array([
-              leftX,
-              bottom,
-              leftZ,
-              0,
-              1,
-              rightX,
-              bottom,
-              rightZ,
-              1,
-              1,
-              rightX,
-              top,
-              rightZ,
-              1,
-              0,
-              leftX,
-              bottom,
-              leftZ,
-              0,
-              1,
-              rightX,
-              top,
-              rightZ,
-              1,
-              0,
-              leftX,
-              top,
-              leftZ,
-              0,
-              0,
-            ]),
-            gl.DYNAMIC_DRAW,
-          );
           gl.bindTexture(gl.TEXTURE_2D, texture);
-          gl.drawArrays(gl.TRIANGLES, 0, 6);
+          drawBillboard(x, z, bottom, halfWidth, height);
         }
 
         for (const avatar of nearby) {
@@ -606,9 +708,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         for (const drop of visibleDrops) {
           let texture = dropTextures.get(drop.id);
           if (!texture) {
-            texture = createTexture() ?? undefined;
+            texture = createTexture(true) ?? undefined;
             if (!texture) continue;
-            uploadTexture(texture, drop.paper);
+            uploadTexture(texture, drop.paper, true);
             dropTextures.set(drop.id, texture);
           }
           const progress = Math.min(1, (time - drop.start) / DROP_DURATION);
@@ -625,6 +727,42 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         gl.disableVertexAttribArray(noticePoint);
         gl.disableVertexAttribArray(paperUv);
       }
+      if (crownLocation) {
+        gl.useProgram(beaconProgram);
+        camera(beaconUniforms);
+        gl.uniform1f(beaconTime, time);
+        gl.bindBuffer(gl.ARRAY_BUFFER, nameplateFace);
+        gl.enableVertexAttribArray(beaconPoint);
+        gl.enableVertexAttribArray(beaconUv);
+        gl.vertexAttribPointer(beaconPoint, 3, gl.FLOAT, false, 20, 0);
+        gl.vertexAttribPointer(beaconUv, 2, gl.FLOAT, false, 20, 12);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+        drawBillboard(
+          crownLocation.x,
+          crownLocation.z,
+          pickupY + 0.45,
+          1.75,
+          85,
+        );
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+        gl.disableVertexAttribArray(beaconPoint);
+        gl.disableVertexAttribArray(beaconUv);
+      }
+      if (shots.some(({ path }) => path)) {
+        const data = shotEffectsMesh(shots, view, time);
+        gl.useProgram(worldProgram);
+        camera(worldUniforms);
+        gl.bindBuffer(gl.ARRAY_BUFFER, shotBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        gl.disable(gl.CULL_FACE);
+        for (const attr of worldAttributes) gl.enableVertexAttribArray(attr);
+        mesh(shotBuffer, data.length / 7, worldAttributes);
+        for (const attr of worldAttributes) gl.disableVertexAttribArray(attr);
+        gl.enable(gl.CULL_FACE);
+      }
       if (showHeldGun) {
         gl.clear(gl.DEPTH_BUFFER_BIT);
         gl.useProgram(worldProgram);
@@ -639,6 +777,16 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         );
         for (const attr of worldAttributes) gl.enableVertexAttribArray(attr);
         mesh(firstPersonGun.buffer, firstPersonGun.count, worldAttributes);
+        if (
+          shots.some(
+            ({ at, ownShot }) => ownShot && time - at < MUZZLE_DURATION,
+          )
+        )
+          mesh(
+            firstPersonFlash.buffer,
+            firstPersonFlash.count,
+            worldAttributes,
+          );
         for (const attr of worldAttributes) gl.disableVertexAttribArray(attr);
       }
     },

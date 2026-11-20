@@ -1,8 +1,8 @@
+import { POINTER_DEGREES, type RunControl } from './controls';
+
 type TouchCallbacks = {
   hasStarted(): boolean;
-  handleLook(deltaX: number, deltaY: number): void;
-  jump(): void;
-  openChat(): void;
+  run: RunControl;
 };
 
 type WebKitDocument = Document & {
@@ -19,7 +19,7 @@ function control<T extends HTMLElement>(game: HTMLElement, selector: string) {
   return element;
 }
 
-function bindFullscreen(game: HTMLElement) {
+function bindFullscreen(game: HTMLElement, run: RunControl) {
   const button = control<HTMLButtonElement>(game, '#fullscreen');
   const status = control(game, '#fullscreen-status');
   const page: WebKitDocument = document;
@@ -27,7 +27,7 @@ function bindFullscreen(game: HTMLElement) {
   const standard = page.fullscreenEnabled && !!target.requestFullscreen;
   const webkit =
     page.webkitFullscreenEnabled && !!target.webkitRequestFullscreen;
-  if (!standard && !webkit) return;
+  if (!standard && !webkit) return () => false;
 
   button.hidden = false;
   const fullElement = () =>
@@ -55,7 +55,9 @@ function bindFullscreen(game: HTMLElement) {
     standard ? 'fullscreenerror' : 'webkitfullscreenerror',
     showError,
   );
-  button.addEventListener('click', async () => {
+  button.addEventListener('click', () => run('fullscreen'));
+
+  return async function toggleFullscreen() {
     try {
       if (fullElement() === game) {
         if (standard) await page.exitFullscreen();
@@ -65,30 +67,32 @@ function bindFullscreen(game: HTMLElement) {
       } else {
         target.webkitRequestFullscreen?.();
       }
+      return true;
     } catch {
       showError();
+      return false;
     }
-  });
+  };
 }
 
 export function bindMobileControls(
   game: HTMLElement,
   world: HTMLCanvasElement,
-  { hasStarted, handleLook, jump, openChat }: TouchCallbacks,
+  { hasStarted, run }: TouchCallbacks,
 ) {
   const stick = control(game, '#move-stick');
   const thumb = control(game, '#move-thumb');
   const jumpButton = control(game, '#touch-jump');
   const chatButton = control(game, '#touch-chat');
-  const movement = { forward: 0, sideways: 0 };
+  const shootButton = control(game, '#touch-shoot');
   let movePointer: number | undefined;
+  let jumpPointer: number | undefined;
   let lookPointer: { id: number; x: number; y: number } | undefined;
 
   function resetMovement() {
     const pointer = movePointer;
     movePointer = undefined;
-    movement.forward = 0;
-    movement.sideways = 0;
+    run('stop');
     thumb.style.removeProperty('translate');
     if (pointer !== undefined && stick.hasPointerCapture(pointer))
       stick.releasePointerCapture(pointer);
@@ -101,9 +105,18 @@ export function bindMobileControls(
       world.releasePointerCapture(pointer.id);
   }
 
+  function resetJump() {
+    const pointer = jumpPointer;
+    jumpPointer = undefined;
+    run('ascend', false);
+    if (pointer !== undefined && jumpButton.hasPointerCapture(pointer))
+      jumpButton.releasePointerCapture(pointer);
+  }
+
   function reset() {
     resetMovement();
     resetLook();
+    resetJump();
   }
 
   function move(event: PointerEvent) {
@@ -117,8 +130,7 @@ export function bindMobileControls(
     const unitY = distance > 0 ? y / distance : 0;
     const offset = Math.min(distance, radius);
     const strength = Math.max(0, (offset / radius - 0.13) / 0.87);
-    movement.sideways = unitX * strength;
-    movement.forward = -unitY * strength;
+    run('move', -unitY * strength, unitX * strength, 0, 0, 0);
     thumb.style.translate = `${unitX * offset}px ${unitY * offset}px`;
   }
 
@@ -138,9 +150,10 @@ export function bindMobileControls(
   });
   world.addEventListener('pointermove', (event) => {
     if (lookPointer?.id !== event.pointerId) return;
-    handleLook(
-      (event.clientX - lookPointer.x) * 2.5,
-      (event.clientY - lookPointer.y) * 2.5,
+    run(
+      'look',
+      (event.clientX - lookPointer.x) * 2.5 * POINTER_DEGREES,
+      -(event.clientY - lookPointer.y) * 2.5 * POINTER_DEGREES,
     );
     lookPointer.x = event.clientX;
     lookPointer.y = event.clientY;
@@ -155,6 +168,9 @@ export function bindMobileControls(
     });
     world.addEventListener(type, ({ pointerId }) => {
       if (pointerId === lookPointer?.id) resetLook();
+    });
+    jumpButton.addEventListener(type, ({ pointerId }) => {
+      if (pointerId === jumpPointer) resetJump();
     });
   }
 
@@ -177,8 +193,18 @@ export function bindMobileControls(
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) reset();
   });
-  jumpButton.addEventListener('click', jump);
-  chatButton.addEventListener('click', openChat);
-  bindFullscreen(game);
-  return { movement, reset };
+  jumpButton.addEventListener('pointerdown', (event) => {
+    if (!hasStarted() || jumpPointer !== undefined || event.button !== 0)
+      return;
+    jumpPointer = event.pointerId;
+    jumpButton.setPointerCapture(jumpPointer);
+    run('ascend', true);
+    run('jump');
+  });
+  jumpButton.addEventListener('click', (event) => {
+    if (event.detail === 0) run('jump');
+  });
+  chatButton.addEventListener('click', () => run('chat'));
+  shootButton.addEventListener('click', () => run('shoot'));
+  return { reset, toggleFullscreen: bindFullscreen(game, run) };
 }
