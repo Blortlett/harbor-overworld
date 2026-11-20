@@ -27,13 +27,13 @@ test('king-jump clears a noticeboard that blocks walking', () => {
   );
 });
 
-test('king-ascent rises continuously while held and falls when released', () => {
+test('king-ascent rises at 11 units per second while held and falls when released', () => {
   const scene = scenarios['king-ascent'];
   const frames = replay(scene);
   const start = ground(scene.x, scene.z) + EYE_HEIGHT;
   for (let frame = 1; frame < 120; frame++)
     assert.ok(frames[frame].y > frames[frame - 1].y);
-  assert.ok(frames[119].y > start + 10);
+  assert.ok(Math.abs(frames[119].y - start - 22) < 1e-9);
   assert.ok(frames[120].y < frames[119].y);
   assert.equal(frames.at(-1).y, start);
 });

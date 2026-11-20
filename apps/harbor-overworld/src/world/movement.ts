@@ -23,7 +23,7 @@ export const EYE_HEIGHT = 1.64;
 export const MAX_PITCH = 1.31;
 const GRAVITY = 33;
 const JUMP_SPEED = 8.2;
-const ASCENT_SPEED = 5.5;
+const ASCENT_SPEED = 11;
 
 type MovementInput = {
   forward: number;
