@@ -218,7 +218,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const stations = gl.createBuffer();
   const noticeFaces = gl.createBuffer();
   const nameplateFace = gl.createBuffer();
-  const nameTextures = new Map<number, WebGLTexture>();
+  const nameTextures = new Map<
+    number,
+    { name: string; texture: WebGLTexture; halfWidth: number }
+  >();
   const avatarMeshes = COATS.map((_, index) => {
     const data = avatarMesh(index);
     const buffer = gl.createBuffer();
@@ -313,16 +316,16 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     if (texture) uploadTexture(texture, image);
   }
 
-  function nameTexture(id: number) {
-    let texture = nameTextures.get(id);
-    if (texture) return texture;
-    const image = nameplate(id);
-    const created = image && createTexture();
-    if (!image || !created) return undefined;
-    texture = created;
+  function nameTexture(id: number, name: string) {
+    const cached = nameTextures.get(id);
+    if (cached?.name === name) return cached;
+    const image = nameplate(id, name);
+    const texture = image && (cached?.texture ?? createTexture());
+    if (!image || !texture) return undefined;
     uploadTexture(texture, image);
-    nameTextures.set(id, texture);
-    return texture;
+    const label = { name, texture, halfWidth: (image.width * 0.45) / 128 };
+    nameTextures.set(id, label);
+    return label;
   }
 
   return {
@@ -428,7 +431,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         for (const attr of avatarAttributes) gl.disableVertexAttribArray(attr);
       }
 
-      for (const [id, texture] of nameTextures) {
+      for (const [id, { texture }] of nameTextures) {
         if (avatars.some((avatar) => avatar.id === id)) continue;
         gl.deleteTexture(texture);
         nameTextures.delete(id);
@@ -453,12 +456,16 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           gl.vertexAttribPointer(noticePoint, 3, gl.FLOAT, false, 20, 0);
           gl.vertexAttribPointer(paperUv, 2, gl.FLOAT, false, 20, 12);
           for (const avatar of nearby) {
-            const texture = nameTexture(avatar.id);
-            if (!texture) continue;
-            const leftX = avatar.x - cy * 0.45;
-            const leftZ = avatar.z - sy * 0.45;
-            const rightX = avatar.x + cy * 0.45;
-            const rightZ = avatar.z + sy * 0.45;
+            const label = nameTexture(
+              avatar.id,
+              avatar.name ?? `Guest ${avatar.id}`,
+            );
+            if (!label) continue;
+            const { texture, halfWidth } = label;
+            const leftX = avatar.x - cy * halfWidth;
+            const leftZ = avatar.z - sy * halfWidth;
+            const rightX = avatar.x + cy * halfWidth;
+            const rightZ = avatar.z + sy * halfWidth;
             const bottom = avatar.y + 1.63;
             const top = bottom + 0.225;
             gl.bufferData(

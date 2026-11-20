@@ -1,16 +1,19 @@
 import {
+  displayName,
   isPose,
   parseMessage,
   PRESENCE_INTERVAL,
   PRESENCE_PATH,
+  type NamedPose,
   type Pose,
   ROOM_CAPACITY,
 } from './presence-protocol';
 
-export type Avatar = Pose & { id: number; walking: boolean };
+export type Avatar = NamedPose & { id: number; walking: boolean };
 
 type Track = {
   from: Pose;
+  name?: string;
   to: Pose;
   receivedAt: number;
   walking: boolean;
@@ -37,7 +40,7 @@ function isPlayerId(value: unknown): value is number {
 }
 
 export function createPresence(
-  readPose: () => Pose,
+  readPose: () => NamedPose,
   onJoin: (slot: number) => void,
   onStatus: (label: string) => void,
 ) {
@@ -67,12 +70,13 @@ export function createPresence(
       connection.bufferedAmount > 1024
     )
       return;
-    const { x, y, z, yaw } = readPose();
+    const { x, y, z, yaw, name } = readPose();
     connection.send(
       JSON.stringify({
         x,
         y,
         z,
+        name,
         yaw: Math.atan2(Math.sin(yaw), Math.cos(yaw)),
       }),
     );
@@ -144,6 +148,7 @@ export function createPresence(
         tracks.set(player.id, {
           from,
           to: player,
+          name: 'name' in player ? displayName(player.name) : undefined,
           receivedAt: now,
           walking: distance > 0.02 && distance < 6,
         });
@@ -196,6 +201,7 @@ export function createPresence(
       return [...tracks.entries()].map(([id, track]) => ({
         id,
         walking: track.walking,
+        name: track.name,
         ...interpolate(track, now),
       }));
     },

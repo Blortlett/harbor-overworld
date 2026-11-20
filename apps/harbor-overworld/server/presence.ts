@@ -3,11 +3,12 @@ import type { Duplex } from 'node:stream';
 import type { HttpServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
+  displayName,
   isPose,
   parseMessage,
   PRESENCE_INTERVAL,
   PRESENCE_PATH,
-  type Pose,
+  type NamedPose,
   type PresenceMessage,
   ROOM_CAPACITY,
 } from '../src/world/presence-protocol.ts';
@@ -19,7 +20,7 @@ type Client = {
   ws: WebSocket;
   id: number;
   slot: number;
-  pose?: Pose;
+  pose?: NamedPose;
   updatedAt: number;
 };
 
@@ -36,7 +37,7 @@ function sameHost(request: IncomingMessage) {
 }
 
 export function attachPresence(http: HttpServer) {
-  const server = new WebSocketServer({ noServer: true, maxPayload: 256 });
+  const server = new WebSocketServer({ noServer: true, maxPayload: 512 });
   const clients = new Map<string, Client>();
   let nextId = 1;
 
@@ -88,7 +89,13 @@ export function attachPresence(http: HttpServer) {
         const message = parseMessage(data.toString());
         if (!isPose(message)) return;
         const { x, y, z, yaw } = message;
-        client.pose = { x, y, z, yaw };
+        client.pose = {
+          x,
+          y,
+          z,
+          yaw,
+          name: 'name' in message ? displayName(message.name) : undefined,
+        };
         client.updatedAt = now;
       });
       const welcome: PresenceMessage = {

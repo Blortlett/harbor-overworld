@@ -51,12 +51,18 @@ export function avatarMesh(index: number) {
   return new Float32Array(mesh.vertices);
 }
 
-export function nameplate(id: number) {
+export function nameplate(id: number, name: string) {
   const paper = document.createElement('canvas');
   paper.width = 128;
   paper.height = 32;
   const context = paper.getContext('2d');
   if (!context) return null;
+  const font = '700 18px monospace';
+  context.font = font;
+  paper.width = Math.max(
+    128,
+    Math.min(320, Math.ceil(context.measureText(name).width + 24)),
+  );
   context.fillStyle = '#15241c';
   context.fillRect(0, 0, paper.width, paper.height);
   const tint = COATS[coatIndex(id)].map((channel) => Math.round(channel * 255));
@@ -65,7 +71,7 @@ export function nameplate(id: number) {
   context.fillStyle = '#fff0d5';
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  context.font = '700 18px monospace';
-  context.fillText(`Guest ${id}`, 64, 19, 116);
+  context.font = font;
+  context.fillText(name, paper.width / 2, 19, paper.width - 16);
   return paper;
 }

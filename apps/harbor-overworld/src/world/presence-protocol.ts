@@ -11,7 +11,16 @@ export type Pose = {
   yaw: number;
 };
 
-export type Player = Pose & { id: number };
+export type NamedPose = Pose & { name?: string };
+export type Player = NamedPose & { id: number };
+
+export function displayName(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  return (
+    Array.from(value.replace(/\s+/gu, ' ').trim()).slice(0, 50).join('') ||
+    undefined
+  );
+}
 
 export type PresenceMessage =
   | { type: 'welcome'; id: number; slot: number }

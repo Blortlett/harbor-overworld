@@ -13,6 +13,8 @@ import { coatIndex, COATS } from './avatar';
 import { bindIdentityDialog } from './connect';
 import { PostNotice } from './notice';
 import { type Avatar, createPresence } from './presence';
+import { displayName } from './presence-protocol';
+import { loadProfile } from '../data/profile';
 import {
   createRenderer,
   EYE_HEIGHT,
@@ -62,8 +64,9 @@ const movement = [
 ];
 const view = spawnView();
 const roomStatus = element('room-status');
+let avatarName: string | undefined;
 const presence = createPresence(
-  () => ({ ...view, y: view.y - EYE_HEIGHT }),
+  () => ({ ...view, y: view.y - EYE_HEIGHT, name: avatarName }),
   (slot) => {
     if (Math.hypot(view.x - SPAWN.x, view.z - SPAWN.z) > 0.25) return;
     const { x, y, z } = spawnView(slot);
@@ -88,6 +91,25 @@ let resumePointer = false;
 let resumeChat = false;
 
 draft.maxLength = MAX_POST_LENGTH;
+
+function updateAvatarName(activeClient: PolycentricClient) {
+  const identity = activeClient.activeIdentityKey;
+  avatarName = identity
+    ? displayName(latestLocalProfile(activeClient, identity)?.name)
+    : undefined;
+  if (!identity || avatarName) return;
+  void loadProfile(activeClient, identity)
+    .then(({ name }) => {
+      if (
+        client === activeClient &&
+        activeClient.activeIdentityKey === identity &&
+        !avatarName
+      ) {
+        avatarName = displayName(name);
+      }
+    })
+    .catch(() => undefined);
+}
 
 function announce(message: string) {
   clearTimeout(toastTimer);
@@ -115,6 +137,7 @@ async function loadPosts() {
   markNetwork('loading', 'CONNECTING', 'Harbor feed');
   try {
     client = await getClient();
+    updateAvatarName(client);
     connectIdentity.hidden = !!client.activeIdentityKey;
     const page = await loadExplorePage(client, 'latest', undefined, {
       servers: HARBOR_PRODUCTION_SERVERS,
@@ -248,6 +271,7 @@ async function openChat(target?: PostData) {
   showComposer();
   try {
     client = await getClient();
+    updateAvatarName(client);
     if (!chatPanel.open) return;
     showComposer();
     if (!client.activeIdentityKey)
@@ -348,6 +372,7 @@ identityForm.addEventListener('submit', async (event) => {
   report('Creating your Harbor identity…');
   try {
     await createIdentity(client, name);
+    updateAvatarName(client);
     connectIdentity.hidden = true;
     report(`Posting as ${name}`);
   } catch (error) {
@@ -395,6 +420,7 @@ function openIdentity() {
 
 bindIdentityDialog(connectPanel, (connectedClient) => {
   client = connectedClient;
+  updateAvatarName(connectedClient);
   connectIdentity.hidden = true;
   closePanel(connectPanel, false);
   if (resumeChat) void openChat(replyTo);
