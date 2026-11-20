@@ -172,7 +172,7 @@ function tint(color: Color, light: number): Color {
   return [color[0] * light, color[1] * light, color[2] * light];
 }
 
-class Mesh {
+export class Mesh {
   vertices: number[] = [];
 
   quad(

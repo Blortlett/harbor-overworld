@@ -20,6 +20,20 @@ Open [http://127.0.0.1:4173/](http://127.0.0.1:4173/) in a desktop browser.
 Live posts and identity pairing still use the Harbor production network.
 Press Ctrl+C in the terminal to stop the server.
 
+## Test multiplayer locally
+
+Build the workspace dependencies and Overworld using the source commands
+below, then start the local preview.
+
+```sh
+pnpm --filter harbor-overworld preview --host 127.0.0.1 --port 4173 --strictPort
+```
+
+Open `http://127.0.0.1:4173/` in two desktop browser windows and select
+**Enter world** in both. Both windows should show **2 players online**.
+Walk in one window to see its avatar move in the other. Everyone who enters
+the same preview joins one room of up to 24 players.
+
 ## Deploy the release on your hardware
 
 1. Download [harbor-overworld.tar.gz](https://github.com/SomewhatJustin/harbor-overworld/releases/latest/download/harbor-overworld.tar.gz).

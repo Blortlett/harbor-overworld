@@ -20,11 +20,14 @@
         <div class="compass" aria-hidden="true">
           <div id="compass-track"></div><i></i>
         </div>
-        <button type="button" class="network plate" id="refresh" aria-label="Refresh live posts">
-          <span class="network-lamp" id="network-lamp"></span>
-          <span><strong id="network-name">CONNECTING</strong><small id="network-detail">Harbor feed</small></span>
-          <span class="refresh-icon" aria-hidden="true">↻</span>
-        </button>
+        <div class="world-status">
+          <button type="button" class="network plate" id="refresh" aria-label="Refresh live posts">
+            <span class="network-lamp" id="network-lamp"></span>
+            <span><strong id="network-name">CONNECTING</strong><small id="network-detail">Harbor feed</small></span>
+            <span class="refresh-icon" aria-hidden="true">↻</span>
+          </button>
+          <p class="room-status plate" id="room-status" role="status" hidden></p>
+        </div>
       </header>
       <span class="crosshair" id="crosshair" aria-hidden="true"></span>
       <fieldset class="interaction plate" id="interaction" aria-label="Noticeboard controls" hidden>

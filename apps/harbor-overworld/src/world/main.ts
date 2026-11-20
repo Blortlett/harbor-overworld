@@ -9,10 +9,18 @@ import { createPost, MAX_POST_LENGTH } from '../data/compose';
 import { loadExplorePage } from '../data/feed';
 import { createIdentity, latestLocalProfile } from '../data/identity';
 import { eventKeyFromId, type PostData } from '../data/posts';
+import { coatIndex, COATS } from './avatar';
 import { bindIdentityDialog } from './connect';
 import { PostNotice } from './notice';
-import { createRenderer, facingNotice, spawnView, walk } from './renderer';
-import { ground, noise, STATIONS, trailDistance } from './terrain';
+import { type Avatar, createPresence } from './presence';
+import {
+  createRenderer,
+  EYE_HEIGHT,
+  facingNotice,
+  spawnView,
+  walk,
+} from './renderer';
+import { ground, noise, SPAWN, STATIONS, trailDistance } from './terrain';
 import './world.css';
 
 function element<T extends HTMLElement>(id: string) {
@@ -53,6 +61,19 @@ const movement = [
   'ArrowDown',
 ];
 const view = spawnView();
+const roomStatus = element('room-status');
+const presence = createPresence(
+  () => ({ ...view, y: view.y - EYE_HEIGHT }),
+  (slot) => {
+    if (Math.hypot(view.x - SPAWN.x, view.z - SPAWN.z) > 0.25) return;
+    const { x, y, z } = spawnView(slot);
+    Object.assign(view, { x, y, z });
+  },
+  (label) => {
+    roomStatus.hidden = false;
+    roomStatus.textContent = label;
+  },
+);
 let renderer: ReturnType<typeof createRenderer> | undefined;
 let entered = false;
 let dragging = false;
@@ -141,6 +162,7 @@ function capture() {
 
 function enter(captureMouse: boolean) {
   if (!renderer) return;
+  if (!entered) presence.join();
   entered = true;
   welcome.hidden = true;
   game.classList.add('entered');
@@ -482,7 +504,7 @@ const ticks = Array.from({ length: 24 }, (_, index) => {
   return mark;
 });
 
-function drawHud() {
+function drawHud(avatars: readonly Avatar[] = []) {
   const current = `${Math.floor(view.x)} / ${Math.floor(view.z)}`;
   if (coordinates.textContent !== current) coordinates.textContent = current;
   const bearing = ((((view.yaw * 180) / Math.PI) % 360) + 360) % 360;
@@ -501,6 +523,17 @@ function drawHud() {
       3,
       3,
     );
+  }
+  for (const avatar of avatars) {
+    const tint = COATS[coatIndex(avatar.id)].map((channel) =>
+      Math.round(channel * 255),
+    );
+    const x = Math.round((avatar.x - mapX) * mapScale);
+    const y = Math.round((avatar.z - mapZ) * mapScale);
+    mapContext.fillStyle = '#172820';
+    mapContext.fillRect(x - 2, y - 2, 5, 5);
+    mapContext.fillStyle = `rgb(${tint.join(',')})`;
+    mapContext.fillRect(x - 1, y - 1, 3, 3);
   }
   mapContext.save();
   mapContext.translate(
@@ -557,8 +590,9 @@ function start() {
     }
     const noticeIndex = exploring ? facingNotice(view, notices.length) : -1;
     focusNotice(notices[noticeIndex]);
-    renderer.draw(view, time / 1000);
-    drawHud();
+    const avatars = presence.avatars(time);
+    renderer.draw(view, time / 1000, avatars);
+    drawHud(avatars);
   }
   requestAnimationFrame(frame);
 }

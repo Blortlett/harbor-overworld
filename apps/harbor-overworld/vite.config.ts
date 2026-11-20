@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
+import { attachPresence } from './server/presence.ts';
 
 // rs-core-wasm imports its .wasm as a URL and hands it to the loader. Vite
 // would otherwise load it as a wasm ES module and fail, so ask for the URL.
@@ -40,8 +41,18 @@ ${sdk}`,
   },
 };
 
+const multiplayer: Plugin = {
+  name: 'overworld-multiplayer',
+  configureServer({ httpServer }) {
+    if (httpServer) attachPresence(httpServer);
+  },
+  configurePreviewServer({ httpServer }) {
+    attachPresence(httpServer);
+  },
+};
+
 export default defineConfig({
-  plugins: [wasmAsUrl, licenseNotices],
+  plugins: [wasmAsUrl, licenseNotices, multiplayer],
   server: {
     port: 5173,
   },

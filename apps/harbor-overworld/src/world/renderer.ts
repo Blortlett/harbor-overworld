@@ -1,3 +1,5 @@
+import { avatarMesh, coatIndex, COATS, nameplate } from './avatar';
+import type { Avatar } from './presence';
 import {
   ground,
   makeNoticeFaces,
@@ -74,13 +76,29 @@ const worldVertex = `
   uniform vec2 scale;
   varying vec3 color, position;
   varying float material;
+  #ifdef AVATAR
+    uniform vec3 avatarOrigin;
+    uniform vec2 avatarRotation;
+    uniform float avatarStep;
+  #endif
   void main() {
-    vec3 relative = point - eye;
+    vec3 p = point;
+    #ifdef AVATAR
+      if (surface >= 4.0) {
+        float leg = avatarStep * (surface == 4.0 ? 1.0 : -1.0) * max(0.0, 1.0 - p.y / .6);
+        p.z += leg;
+        p.y += max(0.0, leg * .42);
+      }
+      p.xz = vec2(avatarRotation.x * p.x - avatarRotation.y * p.z,
+                  avatarRotation.y * p.x + avatarRotation.x * p.z);
+      p += avatarOrigin;
+    #endif
+    vec3 relative = p - eye;
     float depth = dot(relative, forward);
     gl_Position = vec4(dot(relative,right)*scale.x, dot(relative,up)*scale.y, depth * 1.00045 - .101, depth);
     color = rgb;
-    position = point;
-    material = surface;
+    position = p;
+    material = surface < 4.0 ? surface : 0.0;
   }
 `;
 const worldFragment = `
@@ -188,12 +206,26 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const context = gl;
   const skyProgram = compile(gl, skyVertex, skyFragment);
   const worldProgram = compile(gl, worldVertex, worldFragment);
+  const avatarProgram = compile(
+    gl,
+    `#define AVATAR\n${worldVertex}`,
+    worldFragment,
+  );
   const noticeProgram = compile(gl, noticeVertex, noticeFragment);
   const { vertices, obstacles } = makeTerrain();
   const screen = gl.createBuffer();
   const terrain = gl.createBuffer();
   const stations = gl.createBuffer();
   const noticeFaces = gl.createBuffer();
+  const nameplateFace = gl.createBuffer();
+  const nameTextures = new Map<number, WebGLTexture>();
+  const avatarMeshes = COATS.map((_, index) => {
+    const data = avatarMesh(index);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    return { buffer, count: data.length / 7 };
+  });
   const noticeTextures: WebGLTexture[] = [];
   let stationVertices = 0;
   gl.bindBuffer(gl.ARRAY_BUFFER, screen);
@@ -217,18 +249,27 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   }
   const skyUniforms = uniformLocations(skyProgram);
   const worldUniforms = uniformLocations(worldProgram);
+  const avatarUniforms = uniformLocations(avatarProgram);
+  const avatarOrigin = gl.getUniformLocation(avatarProgram, 'avatarOrigin');
+  const avatarRotation = gl.getUniformLocation(avatarProgram, 'avatarRotation');
+  const avatarStep = gl.getUniformLocation(avatarProgram, 'avatarStep');
+  const avatarTime = gl.getUniformLocation(avatarProgram, 'time');
   const noticeUniforms = uniformLocations(noticeProgram);
   const timeUniform = gl.getUniformLocation(worldProgram, 'time');
   const screenPosition = gl.getAttribLocation(skyProgram, 'pos');
-  const point = gl.getAttribLocation(worldProgram, 'point');
-  const rgb = gl.getAttribLocation(worldProgram, 'rgb');
-  const surface = gl.getAttribLocation(worldProgram, 'surface');
+  function meshAttributes(program: WebGLProgram) {
+    return [
+      context.getAttribLocation(program, 'point'),
+      context.getAttribLocation(program, 'rgb'),
+      context.getAttribLocation(program, 'surface'),
+    ] as const;
+  }
+  const worldAttributes = meshAttributes(worldProgram);
+  const avatarAttributes = meshAttributes(avatarProgram);
   const noticePoint = gl.getAttribLocation(noticeProgram, 'point');
   const paperUv = gl.getAttribLocation(noticeProgram, 'paperUv');
 
-  function setNotice(index: number, image: HTMLCanvasElement) {
-    const texture = noticeTextures[index];
-    if (!texture) return;
+  function uploadTexture(texture: WebGLTexture, image: HTMLCanvasElement) {
     context.bindTexture(context.TEXTURE_2D, texture);
     context.texImage2D(
       context.TEXTURE_2D,
@@ -238,6 +279,50 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       context.UNSIGNED_BYTE,
       image,
     );
+  }
+
+  function createTexture() {
+    const texture = context.createTexture();
+    if (!texture) return null;
+    context.bindTexture(context.TEXTURE_2D, texture);
+    context.texParameteri(
+      context.TEXTURE_2D,
+      context.TEXTURE_MIN_FILTER,
+      context.LINEAR,
+    );
+    context.texParameteri(
+      context.TEXTURE_2D,
+      context.TEXTURE_MAG_FILTER,
+      context.LINEAR,
+    );
+    context.texParameteri(
+      context.TEXTURE_2D,
+      context.TEXTURE_WRAP_S,
+      context.CLAMP_TO_EDGE,
+    );
+    context.texParameteri(
+      context.TEXTURE_2D,
+      context.TEXTURE_WRAP_T,
+      context.CLAMP_TO_EDGE,
+    );
+    return texture;
+  }
+
+  function setNotice(index: number, image: HTMLCanvasElement) {
+    const texture = noticeTextures[index];
+    if (texture) uploadTexture(texture, image);
+  }
+
+  function nameTexture(id: number) {
+    let texture = nameTextures.get(id);
+    if (texture) return texture;
+    const image = nameplate(id);
+    const created = image && createTexture();
+    if (!image || !created) return undefined;
+    texture = created;
+    uploadTexture(texture, image);
+    nameTextures.set(id, texture);
+    return texture;
   }
 
   return {
@@ -258,35 +343,14 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         context.deleteTexture(noticeTextures.pop() ?? null);
       for (const [index, page] of pages.entries()) {
         if (!noticeTextures[index]) {
-          const texture = context.createTexture();
+          const texture = createTexture();
           if (!texture) break;
           noticeTextures.push(texture);
-          context.bindTexture(context.TEXTURE_2D, texture);
-          context.texParameteri(
-            context.TEXTURE_2D,
-            context.TEXTURE_MIN_FILTER,
-            context.LINEAR,
-          );
-          context.texParameteri(
-            context.TEXTURE_2D,
-            context.TEXTURE_MAG_FILTER,
-            context.LINEAR,
-          );
-          context.texParameteri(
-            context.TEXTURE_2D,
-            context.TEXTURE_WRAP_S,
-            context.CLAMP_TO_EDGE,
-          );
-          context.texParameteri(
-            context.TEXTURE_2D,
-            context.TEXTURE_WRAP_T,
-            context.CLAMP_TO_EDGE,
-          );
         }
         setNotice(index, page);
       }
     },
-    draw(view: View, time: number) {
+    draw(view: View, time: number, avatars: readonly Avatar[]) {
       const gl = context;
       const height = Math.max(1, Math.min(canvas.clientHeight, 660));
       const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
@@ -322,7 +386,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       gl.useProgram(worldProgram);
       camera(worldUniforms);
       gl.uniform1f(timeUniform, time);
-      function mesh(buffer: WebGLBuffer | null, count: number) {
+      function mesh(
+        buffer: WebGLBuffer | null,
+        count: number,
+        [point, rgb, surface]: typeof worldAttributes,
+      ) {
         if (!count) return;
         gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
         gl.vertexAttribPointer(point, 3, gl.FLOAT, false, 28, 0);
@@ -330,14 +398,45 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         gl.vertexAttribPointer(surface, 1, gl.FLOAT, false, 28, 24);
         gl.drawArrays(gl.TRIANGLES, 0, count);
       }
-      for (const attr of [point, rgb, surface])
-        gl.enableVertexAttribArray(attr);
-      mesh(terrain, vertices.length / 7);
-      mesh(stations, stationVertices);
-      for (const attr of [point, rgb, surface])
-        gl.disableVertexAttribArray(attr);
+      for (const attr of worldAttributes) gl.enableVertexAttribArray(attr);
+      mesh(terrain, vertices.length / 7, worldAttributes);
+      mesh(stations, stationVertices, worldAttributes);
+      for (const attr of worldAttributes) gl.disableVertexAttribArray(attr);
 
-      if (noticeTextures.length) {
+      const visible = avatars.filter(
+        ({ x, z }) => Math.hypot(x - view.x, z - view.z) >= 0.55,
+      );
+      if (visible.length) {
+        gl.useProgram(avatarProgram);
+        camera(avatarUniforms);
+        gl.uniform1f(avatarTime, time);
+        for (const attr of avatarAttributes) gl.enableVertexAttribArray(attr);
+        for (const avatar of visible) {
+          const model = avatarMeshes[coatIndex(avatar.id)];
+          gl.uniform3f(avatarOrigin, avatar.x, avatar.y, avatar.z);
+          gl.uniform2f(
+            avatarRotation,
+            Math.cos(avatar.yaw),
+            Math.sin(avatar.yaw),
+          );
+          gl.uniform1f(
+            avatarStep,
+            avatar.walking ? Math.sin(time * 14 + avatar.id) * 0.18 : 0,
+          );
+          mesh(model.buffer, model.count, avatarAttributes);
+        }
+        for (const attr of avatarAttributes) gl.disableVertexAttribArray(attr);
+      }
+
+      for (const [id, texture] of nameTextures) {
+        if (avatars.some((avatar) => avatar.id === id)) continue;
+        gl.deleteTexture(texture);
+        nameTextures.delete(id);
+      }
+      const nearby = visible.filter(
+        ({ x, z }) => Math.hypot(x - view.x, z - view.z) < 17,
+      );
+      if (noticeTextures.length || nearby.length) {
         gl.useProgram(noticeProgram);
         camera(noticeUniforms);
         gl.bindBuffer(gl.ARRAY_BUFFER, noticeFaces);
@@ -349,6 +448,59 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           gl.bindTexture(gl.TEXTURE_2D, texture);
           gl.drawArrays(gl.TRIANGLES, index * NOTICE_VERTICES, NOTICE_VERTICES);
         }
+        if (nearby.length) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, nameplateFace);
+          gl.vertexAttribPointer(noticePoint, 3, gl.FLOAT, false, 20, 0);
+          gl.vertexAttribPointer(paperUv, 2, gl.FLOAT, false, 20, 12);
+          for (const avatar of nearby) {
+            const texture = nameTexture(avatar.id);
+            if (!texture) continue;
+            const leftX = avatar.x - cy * 0.45;
+            const leftZ = avatar.z - sy * 0.45;
+            const rightX = avatar.x + cy * 0.45;
+            const rightZ = avatar.z + sy * 0.45;
+            const bottom = avatar.y + 1.63;
+            const top = bottom + 0.225;
+            gl.bufferData(
+              gl.ARRAY_BUFFER,
+              new Float32Array([
+                leftX,
+                bottom,
+                leftZ,
+                0,
+                1,
+                rightX,
+                bottom,
+                rightZ,
+                1,
+                1,
+                rightX,
+                top,
+                rightZ,
+                1,
+                0,
+                leftX,
+                bottom,
+                leftZ,
+                0,
+                1,
+                rightX,
+                top,
+                rightZ,
+                1,
+                0,
+                leftX,
+                top,
+                leftZ,
+                0,
+                0,
+              ]),
+              gl.DYNAMIC_DRAW,
+            );
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+          }
+        }
         gl.disableVertexAttribArray(noticePoint);
         gl.disableVertexAttribArray(paperUv);
       }
@@ -356,13 +508,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   };
 }
 
-export function spawnView(): View {
-  return {
-    ...SPAWN,
-    y: ground(SPAWN.x, SPAWN.z) + EYE_HEIGHT,
-    yaw: 0.075,
-    pitch: -0.075,
-  };
+export function spawnView(slot = 0): View {
+  const rows = [SPAWN.z, 14.2, 20.7, 11.5, 23.7, 26.7, 29.1, 32.3];
+  const x = SPAWN.x + [0, -1.8, 1.8][Math.floor(slot / rows.length)];
+  const z = rows[slot % rows.length];
+  return { x, y: ground(x, z) + EYE_HEIGHT, z, yaw: 0.075, pitch: -0.075 };
 }
 
 export function walk(
