@@ -2,7 +2,11 @@
 // with "blort-inventory" so it can't collide with presence's own messages.
 // Shared by the browser (link.ts) and the server (inventory-room.ts).
 
-import { CONTAINER_SLOTS, type ContainerKind } from '../loot/containers.ts';
+import {
+  CONTAINER_SLOTS,
+  type ContainerKind,
+  isContainerKind,
+} from '../loot/containers.ts';
 import type { Slot } from './inventory.ts';
 import { ITEMS } from './items.ts';
 
@@ -83,7 +87,8 @@ export const MAX_GRANT = 999;
 
 type Loose = Record<string, unknown>;
 
-function isObject(value: unknown): value is Loose {
+/** A plain object (not null or an array), as parsed from JSON. */
+export function isObject(value: unknown): value is Loose {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -171,18 +176,17 @@ export function readSlots(value: unknown, size: number): Slot[] | undefined {
   return slots;
 }
 
-/** Validates the server's state message in the browser. */
+/** The open container in the server's state message, or null. */
 function readOpenContainer(value: unknown): OpenContainer | null {
   if (!isObject(value)) return null;
   const { id, kind } = value;
   const slots = readSlots(value.slots, CONTAINER_SLOTS);
-  return typeof id === 'string' &&
-    (kind === 'chest' || kind === 'loot') &&
-    slots
+  return typeof id === 'string' && isContainerKind(kind) && slots
     ? { id, kind, slots }
     : null;
 }
 
+/** Validates the server's state message in the browser. */
 export function readState(value: unknown):
   | {
       hotbar: Slot[];
@@ -221,7 +225,7 @@ export function readWorld(value: unknown): ContainerPlacement[] | undefined {
     if (!isObject(entry)) return [];
     const { id, kind, x, y, z, yaw, open } = entry;
     return typeof id === 'string' &&
-      (kind === 'chest' || kind === 'loot') &&
+      isContainerKind(kind) &&
       finite(x) &&
       finite(y) &&
       finite(z) &&

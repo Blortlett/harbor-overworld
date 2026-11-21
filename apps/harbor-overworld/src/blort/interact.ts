@@ -1,6 +1,7 @@
-// Things the player can use with E. Anything Blort adds to the world (chests
-// today) lists itself here; the one you're close to and looking at gets the
-// "Press E to interact" prompt, and E uses it.
+// Things the player can use with E. Each interactable object registers itself
+// here once (chests today) and removes itself when it goes away. Only one
+// prompt can show and E can only do one thing, so this module picks the one
+// you're close to and looking at: it gets "Press E to interact", and E uses it.
 
 import { currentPlayerPose, type PlayerPose } from '../world/bridge.ts';
 
@@ -18,12 +19,15 @@ const FACING = (35 * Math.PI) / 180;
 /** Closer than this, it counts whichever way you face. */
 const POINT_BLANK = 0.7;
 
-const sources = new Set<() => readonly Interactable[]>();
+const interactables = new Set<Interactable>();
 
-/** Adds a list of interactables, read every frame. Returns a remover. */
-export function addInteractables(source: () => readonly Interactable[]) {
-  sources.add(source);
-  return () => sources.delete(source);
+/**
+ * Makes something usable with E. Its x, z and inReach are read every frame,
+ * so it can move. Returns a remover.
+ */
+export function addInteractable(interactable: Interactable) {
+  interactables.add(interactable);
+  return () => interactables.delete(interactable);
 }
 
 /** How far, in radians, the player would turn to face x, z. */
@@ -69,14 +73,9 @@ export function mountInteraction({ ready, setPrompt }: InteractionOptions) {
   function tick() {
     requestAnimationFrame(tick);
     const pose = currentPlayerPose();
-    target =
-      pose && ready()
-        ? targetFor(
-            pose,
-            [...sources].flatMap((source) => source()),
-          )
-        : undefined;
-    setPrompt(!!target);
+    const next = pose && ready() ? targetFor(pose, interactables) : undefined;
+    if (!!next !== !!target) setPrompt(!!next);
+    target = next;
   }
   requestAnimationFrame(tick);
 

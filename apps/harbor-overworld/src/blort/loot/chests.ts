@@ -14,7 +14,7 @@ import {
   chestBodyMesh,
   chestLidMesh,
 } from './chest-mesh.ts';
-import { addInteractables } from '../interact.ts';
+import { addInteractable } from '../interact.ts';
 import { withinReach } from './containers.ts';
 
 /** Radians per second the lid swings. */
@@ -34,9 +34,26 @@ export function mountChests({ openHere, onOpen, onLeave }: ChestOptions) {
   const lid = chestLidMesh();
   let placements: ContainerPlacement[] = [];
   const lidAngles = new Map<string, number>();
+  /** Each chest's interactable, with the placement it reads. */
+  const usable = new Map<
+    string,
+    { placement: ContainerPlacement; remove: () => void }
+  >();
   let last = performance.now();
 
+  /** Closes the panel if we end up out of reach, e.g. respawned elsewhere. */
+  function checkReach() {
+    const open = openHere();
+    if (!open) return;
+    const chest = usable.get(open)?.placement;
+    const feet = currentPlayerPose();
+    if (!chest || !feet || !withinReach(chest, feet)) onLeave();
+  }
+
+  // The renderer reads this once a frame; it also does the frame's reach
+  // check, so chests need no loop of their own.
   function props(): Prop[] {
+    checkReach();
     const now = performance.now();
     const step = Math.min(0.1, (now - last) / 1000) * LID_SPEED;
     last = now;
@@ -66,30 +83,39 @@ export function mountChests({ openHere, onOpen, onLeave }: ChestOptions) {
   }
   setPropSource(props);
 
-  addInteractables(() =>
-    placements.map((chest) => ({
-      id: chest.id,
-      x: chest.x,
-      z: chest.z,
-      inReach: (feet) => withinReach(chest, feet),
-      interact: () => onOpen(chest.id),
-    })),
-  );
-
-  // Close the panel if we end up out of reach, e.g. respawned elsewhere.
-  function tick() {
-    requestAnimationFrame(tick);
-    const open = openHere();
-    if (!open) return;
-    const chest = placements.find((c) => c.id === open);
-    const feet = currentPlayerPose();
-    if (!chest || !feet || !withinReach(chest, feet)) onLeave();
+  /** Registers a chest as usable with E the first time the server lists it. */
+  function makeUsable(placement: ContainerPlacement) {
+    const entry = { placement, remove: () => {} };
+    const { id } = placement;
+    entry.remove = addInteractable({
+      id,
+      get x() {
+        return entry.placement.x;
+      },
+      get z() {
+        return entry.placement.z;
+      },
+      inReach: (feet) => withinReach(entry.placement, feet),
+      interact: () => onOpen(id),
+    });
+    usable.set(id, entry);
   }
-  requestAnimationFrame(tick);
 
   return {
     setPlacements(next: ContainerPlacement[]) {
       placements = next;
+      const ids = new Set(next.map(({ id }) => id));
+      for (const [id, entry] of usable) {
+        if (ids.has(id)) continue;
+        entry.remove();
+        usable.delete(id);
+        lidAngles.delete(id);
+      }
+      for (const placement of next) {
+        const entry = usable.get(placement.id);
+        if (entry) entry.placement = placement;
+        else makeUsable(placement);
+      }
     },
   };
 }

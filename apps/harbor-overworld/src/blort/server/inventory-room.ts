@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { Inventory, moveSlot } from '../inventory/inventory.ts';
+import { canTakeInto, Inventory, moveSlot } from '../inventory/inventory.ts';
 import { GUN_ITEM_ID } from '../inventory/items.ts';
 import {
   BACKPACK_SLOTS,
@@ -17,6 +17,7 @@ import {
   type InventoryState,
   type InventoryWorld,
   isInventoryMessage,
+  isObject,
   PLAYER_KEY_PATTERN,
   readRequest,
   readSlots,
@@ -89,9 +90,11 @@ function newBags(): Bags {
   };
 }
 
-type Loose = Record<string, unknown>;
-const isLoose = (value: unknown): value is Loose =>
-  !!value && typeof value === 'object' && !Array.isArray(value);
+function isEmpty(bags: Bags) {
+  return Object.values(bags).every((bag) =>
+    bag.snapshot().every((slot) => slot === null),
+  );
+}
 
 function loadFile(file: string | undefined) {
   const players = new Map<string, Bags>();
@@ -103,22 +106,23 @@ function loadFile(file: string | undefined) {
   } catch {
     return { players, containers }; // Missing or unreadable: start fresh.
   }
-  if (!isLoose(data)) return { players, containers };
-  if (isLoose(data.players)) {
+  if (!isObject(data)) return { players, containers };
+  if (isObject(data.players)) {
     for (const [key, value] of Object.entries(data.players)) {
-      if (!PLAYER_KEY_PATTERN.test(key) || !isLoose(value)) continue;
+      if (!PLAYER_KEY_PATTERN.test(key) || !isObject(value)) continue;
       const hotbar = readSlots(value.hotbar, HOTBAR_SLOTS);
       const backpack = readSlots(value.backpack, BACKPACK_SLOTS);
       if (!hotbar || !backpack) continue;
       const bags = newBags();
       bags.hotbar.replaceAll(hotbar);
       bags.backpack.replaceAll(backpack);
-      players.set(key, bags);
+      // Older saves kept empty inventories; they'd only use up the cap.
+      if (!isEmpty(bags)) players.set(key, bags);
     }
   }
-  if (isLoose(data.containers)) {
+  if (isObject(data.containers)) {
     for (const [id, value] of Object.entries(data.containers)) {
-      if (!isLoose(value)) continue;
+      if (!isObject(value)) continue;
       const slots = readSlots(value.slots, CONTAINER_SLOTS);
       if (!slots) continue;
       const inventory = new Inventory(CONTAINER_SLOTS);
@@ -259,7 +263,7 @@ export function createInventoryRoom({
     const target = file;
     const saved: Record<string, { hotbar: unknown; backpack: unknown }> = {};
     for (const [key, { bags, saved: keep }] of players) {
-      if (keep)
+      if (keep && !isEmpty(bags))
         saved[key] = {
           hotbar: bags.hotbar.snapshot(),
           backpack: bags.backpack.snapshot(),
@@ -286,9 +290,23 @@ export function createInventoryRoom({
     return saving;
   }
 
-  /** Saves soon. Pass a player to skip it when they're past the save cap. */
+  /**
+   * Gives a player a place in the save file the first time they hold
+   * something, while there's room under the cap. Empty inventories never
+   * take a place, so made-up keys can't use the cap up. True once saved.
+   */
+  function claimSave(player: Player) {
+    if (player.saved) return true;
+    if (isEmpty(player.bags) || savedCount >= maxSaved) return false;
+    player.saved = true;
+    savedCount++;
+    return true;
+  }
+
+  /** Saves soon. Pass a player to skip it when they can't be saved. */
   function scheduleSave(player?: Player) {
-    if (!file || (player && !player.saved) || saveTimer) return;
+    if (player && !claimSave(player)) return;
+    if (!file || saveTimer) return;
     saveTimer = setTimeout(() => {
       saveTimer = undefined;
       void write();
@@ -302,9 +320,7 @@ export function createInventoryRoom({
     const bags = newBags();
     for (const { bag, itemId, quantity } of starterKit)
       bags[bag].addItem(itemId, quantity);
-    const saved = savedCount < maxSaved;
-    if (saved) savedCount++;
-    player = { bags, sockets: new Set(), saved };
+    player = { bags, sockets: new Set(), saved: false };
     players.set(key, player);
     scheduleSave(player);
     return player;
@@ -343,7 +359,8 @@ export function createInventoryRoom({
     const player = players.get(key);
     if (!player) return;
     player.sockets.delete(socket);
-    // Unsaved inventories only live while someone is using them.
+    // Unsaved inventories (empty, or past the save cap) only live while
+    // someone is using them.
     if (!player.saved && !player.sockets.size) players.delete(key);
   }
 
@@ -363,31 +380,32 @@ export function createInventoryRoom({
      */
     receive(socket: InventorySocket, message: unknown): boolean {
       if (!isInventoryMessage(message)) return false;
+      const time = now();
       let connection = connections.get(socket);
       if (!connection) {
-        connection = { windowStart: now(), count: 0 };
+        connection = { windowStart: time, count: 0 };
         connections.set(socket, connection);
       }
-      const time = now();
       if (time - connection.windowStart >= 1000) {
         connection.windowStart = time;
         connection.count = 0;
       }
+      // Over the limit: drop it without a reply. The browser never changes
+      // its own copy before the server answers, so nothing goes out of step.
       if (++connection.count > messagesPerSecond) return true;
 
       const request = readRequest(message);
       if (!request) return true;
 
       if (request.type === 'blort-inventory-hello') {
-        detach(socket, connection);
-        connection.held = undefined;
-        const closed = closeContainer(connection);
+        // One key per connection: the browser says hello once per socket, so
+        // a second one is someone cycling keys to mint inventories.
+        if (connection.key) return true;
         const player = playerFor(request.key);
         connection.key = request.key;
         player.sockets.add(socket);
         // The container list first, so the last word is this player's bags.
-        if (closed) broadcastWorld();
-        else send(socket, world());
+        send(socket, world());
         send(socket, state(player, socket));
         return true;
       }
@@ -425,15 +443,21 @@ export function createInventoryRoom({
           if (closed) broadcastWorld();
           return true;
         }
-        // Loot containers only give: nothing goes in, nothing is rearranged.
-        if (open?.definition.kind === 'loot' && to.bag === 'container') {
-          send(socket, state(player, socket));
-          return true;
-        }
         const bag = (name: Bag) =>
           name === 'container' && open
             ? open.slots
             : player.bags[name as PlayerBag];
+        // Loot containers only give: nothing goes in, nothing is rearranged,
+        // and taking onto a different item can't swap that item in.
+        if (
+          open?.definition.kind === 'loot' &&
+          (to.bag === 'container' ||
+            (from.bag === 'container' &&
+              !canTakeInto(bag(from.bag), from.index, bag(to.bag), to.index)))
+        ) {
+          send(socket, state(player, socket));
+          return true;
+        }
         if (moveSlot(bag(from.bag), from.index, bag(to.bag), to.index)) {
           publish(
             player,

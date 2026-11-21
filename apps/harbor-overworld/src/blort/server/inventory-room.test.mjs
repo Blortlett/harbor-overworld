@@ -212,6 +212,18 @@ test('keys past the save cap work but are not saved', async (t) => {
   assert.deepEqual(Object.keys(saved.players), [KEY_A]);
 });
 
+test('a second hello on the same connection is ignored', () => {
+  const room = createInventoryRoom();
+  const ws = socket();
+  room.receive(ws, hello(KEY_A));
+  const sent = ws.sent.length;
+  assert.equal(room.receive(ws, hello(KEY_B)), true);
+  assert.equal(ws.sent.length, sent, 'no reply');
+  // Still KEY_A's bags: moving the pistol works on them.
+  room.receive(ws, move('hotbar', 0, 'backpack', 20));
+  assert.equal(ws.last.backpack[20].itemId, 'pistol');
+});
+
 test('a corrupt save file starts fresh instead of crashing', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'blort-inventory-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -422,6 +434,18 @@ test('loot can be taken but nothing goes in or moves around', () => {
   assert.deepEqual(latest(ws).backpack[23], taken);
 });
 
+test('taking loot onto a different item does not swap it in', () => {
+  const { room, join } = containerRoom();
+  const ws = join(KEY_A);
+  room.receive(ws, open('test-loot'));
+  const before = latest(ws).container.slots;
+  const lantern = latest(ws).hotbar[1];
+  const index = before.findIndex((slot) => slot && slot.itemId !== 'lantern');
+  room.receive(ws, move('container', index, 'hotbar', 1));
+  assert.deepEqual(latest(ws).container.slots, before);
+  assert.deepEqual(latest(ws).hotbar[1], lantern);
+});
+
 test('everyone looking in sees a take as it happens', () => {
   const { room, join } = containerRoom();
   const a = join(KEY_A);
@@ -506,4 +530,28 @@ test('looted containers keep their contents through a restart', async (t) => {
   second.room.receive(again, open('test-loot'));
   assert.deepEqual(latest(again).container.slots, [null, ...rolled.slice(1)]);
   assert.equal(rerolled, false);
+});
+
+test('empty inventories are never saved and never use up the cap', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'blort-inventory-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, 'inventories.json');
+  const { room, join: joinAt } = containerRoom({
+    file,
+    maxSaved: 1,
+    starterKit: [],
+    saveDelayMs: 10,
+  });
+  // Lots of made-up keys that never pick anything up.
+  for (let i = 0; i < 50; i++) {
+    const ws = joinAt(i.toString(16).padStart(32, 'c'));
+    room.disconnect(ws);
+  }
+  // A real player loots a chest: they get the one saved place.
+  const ws = joinAt(KEY_A);
+  room.receive(ws, open('test-loot'));
+  room.receive(ws, move('container', 0, 'backpack', 0));
+  await room.close();
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual(Object.keys(saved.players), [KEY_A]);
 });

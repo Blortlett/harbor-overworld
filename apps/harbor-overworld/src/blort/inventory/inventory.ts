@@ -114,6 +114,22 @@ export class Inventory {
 }
 
 /**
+ * Whether moving from one slot to another takes the stack without anything
+ * coming back: the target is empty or holds the same item. Take-only
+ * inventories (loot chests) only allow these moves, so nothing swaps in.
+ */
+export function canTakeInto(
+  from: Inventory,
+  fromIndex: number,
+  to: Inventory,
+  toIndex: number,
+): boolean {
+  const source = from.getSlot(fromIndex);
+  const target = to.getSlot(toIndex);
+  return !!source && (!target || target.itemId === source.itemId);
+}
+
+/**
  * Moves a stack between any two slots, in the same inventory or different
  * ones. An empty target takes the stack, the same item merges up to its max
  * stack with the rest staying behind, and a different item swaps.

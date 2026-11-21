@@ -11,6 +11,10 @@ export const CONTAINER_REACH = 3;
 
 export type ContainerKind = 'chest' | 'loot';
 
+export function isContainerKind(value: unknown): value is ContainerKind {
+  return value === 'chest' || value === 'loot';
+}
+
 export type ContainerDefinition = {
   /** Stable key in the save file. Never reuse one for a different spot. */
   id: string;

@@ -3,7 +3,7 @@
 // Kept apart from the game's own HUD: it reads game state from the DOM
 // (#overworld.entered, open dialogs, pointer lock) instead of importing it.
 
-import type { Inventory } from './inventory.ts';
+import { canTakeInto, type Inventory } from './inventory.ts';
 import { getItem } from './items.ts';
 import type { ContainerKind } from '../loot/containers.ts';
 import type { Bag, SlotAddress } from './protocol.ts';
@@ -375,15 +375,22 @@ export function mountInventoryHud({
 
   window.addEventListener('pointerup', (event) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    const { bag, index } = drag;
+    const { inventory, bag, index } = drag;
     cancelDrag();
     const element = document
       .elementFromPoint(event.clientX, event.clientY)
       ?.closest('.blort-slot');
     const target = element && slotRefs.get(element);
-    if (target?.bag === 'container' && containerKind === 'loot') return;
-    if (target && (target.bag !== bag || target.index !== index))
-      onMove({ bag, index }, { bag: target.bag, index: target.index });
+    if (!target || (target.bag === bag && target.index === index)) return;
+    // Loot chests only give (the server enforces this too).
+    if (
+      containerKind === 'loot' &&
+      (target.bag === 'container' ||
+        (bag === 'container' &&
+          !canTakeInto(inventory, index, target.inventory, target.index)))
+    )
+      return;
+    onMove({ bag, index }, { bag: target.bag, index: target.index });
   });
 
   window.addEventListener('pointercancel', cancelDrag);

@@ -30,6 +30,8 @@ if (game && world instanceof HTMLCanvasElement) {
   // asked to open but haven't heard back about.
   let openId: string | null = null;
   let pendingOpen: string | null = null;
+  /** The hotbar slot whose gun is drawn, as the server last said. */
+  let held: number | null = null;
 
   const hud = mountInventoryHud({
     game,
@@ -68,7 +70,6 @@ if (game && world instanceof HTMLCanvasElement) {
     setPrompt: hud.setPrompt,
   });
 
-  let held: number | null = null;
   function setHeld(next: number | null) {
     held = next;
     hud.setHeld(held);
