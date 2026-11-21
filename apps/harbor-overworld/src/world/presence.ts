@@ -35,7 +35,12 @@ import {
 } from './vehicles';
 import { inventoryLink } from '../blort/inventory/link';
 
-export type Avatar = NamedPose & { id: number; walking: boolean; king?: true };
+export type Avatar = NamedPose & {
+  id: number;
+  walking: boolean;
+  king?: true;
+  armed?: true;
+};
 export type LocalCrown =
   | { location: CrownLocation }
   | { expiresAt: number; holderName?: string };
@@ -54,6 +59,7 @@ type Track = {
   receivedAt: number;
   walking: boolean;
   king?: true;
+  armed?: true;
   kingScale?: KingScale;
 };
 
@@ -479,6 +485,7 @@ export function createPresence(
           name: 'name' in player ? displayName(player.name) : undefined,
           chat: 'chat' in player ? readChat(player.chat) : undefined,
           king: king ? true : undefined,
+          armed: 'armed' in player && player.armed === true ? true : undefined,
           kingScale:
             king && 'kingScale' in player
               ? readKingScale(player.kingScale)
@@ -573,6 +580,7 @@ export function createPresence(
         name: track.name,
         chat: track.chat,
         king: track.king,
+        armed: track.armed,
         kingScale: track.kingScale,
         ...interpolate(track, now),
       }));

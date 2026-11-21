@@ -15,6 +15,8 @@ type HudOptions = {
   backpackColumns: number;
   /** Asks for a stack to move. The inventories update when the server replies. */
   onMove: (from: SlotAddress, to: SlotAddress) => void;
+  /** A hotbar number key was pressed, after its slot is selected. */
+  onHotbarKey?: (index: number) => void;
 };
 
 type SlotRef = { inventory: Inventory; bag: Bag; index: number };
@@ -50,6 +52,7 @@ export function mountInventoryHud({
   backpack,
   backpackColumns,
   onMove,
+  onHotbarKey,
 }: HudOptions) {
   const root = document.createElement('div');
   root.className = 'blort-inventory';
@@ -166,7 +169,16 @@ export function mountInventoryHud({
     if (!online) cancelDrag();
   }
 
-  // Hotbar selection (1–6). Nothing uses the selected item yet.
+  // The hotbar slot whose gun is drawn, outlined until it's holstered.
+  let held: number | null = null;
+  function setHeld(index: number | null) {
+    const elements = slotElements.get(hotbar) ?? [];
+    if (held !== null) elements[held]?.classList.remove('held');
+    held = index;
+    if (held !== null) elements[held]?.classList.add('held');
+  }
+
+  // Hotbar selection (1–6). Keys also go to onHotbarKey.
   let selected = 0;
   function select(index: number) {
     const elements = slotElements.get(hotbar) ?? [];
@@ -244,6 +256,7 @@ export function mountInventoryHud({
         if (index < hotbar.size) {
           event.preventDefault();
           select(index);
+          if (!event.repeat) onHotbarKey?.(index);
           return;
         }
       }
@@ -322,6 +335,7 @@ export function mountInventoryHud({
     },
     setOpen,
     select,
+    setHeld,
     setOnline,
   };
 }

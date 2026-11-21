@@ -6,11 +6,13 @@ import { readFileSync } from 'node:fs';
 import { rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Inventory, moveSlot } from '../inventory/inventory.ts';
+import { GUN_ITEM_ID } from '../inventory/items.ts';
 import {
   BACKPACK_SLOTS,
   type Bag,
   HOTBAR_SLOTS,
   type InventoryState,
+  type SlotAddress,
   isInventoryMessage,
   PLAYER_KEY_PATTERN,
   readRequest,
@@ -22,7 +24,13 @@ export type InventorySocket = { send(data: string): void };
 
 type Bags = Record<Bag, Inventory>;
 type Player = { bags: Bags; sockets: Set<InventorySocket>; saved: boolean };
-type Connection = { key?: string; windowStart: number; count: number };
+type Connection = {
+  key?: string;
+  windowStart: number;
+  count: number;
+  /** Hotbar slot whose gun this connection is holding. */
+  held?: number;
+};
 
 export type InventoryRoomOptions = {
   /** JSON file to load from and save to. Memory only when unset. */
@@ -37,6 +45,7 @@ export type InventoryRoomOptions = {
 };
 
 export const STARTER_KIT: { bag: Bag; itemId: string; quantity: number }[] = [
+  { bag: 'hotbar', itemId: GUN_ITEM_ID, quantity: 1 },
   { bag: 'hotbar', itemId: 'lantern', quantity: 1 },
   { bag: 'hotbar', itemId: 'rope', quantity: 3 },
   { bag: 'backpack', itemId: 'driftwood', quantity: 26 },
@@ -101,13 +110,18 @@ export function createInventoryRoom({
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let saving = Promise.resolve();
 
-  function state({ bags }: Player): string {
+  function state({ bags }: Player, socket: InventorySocket): string {
     const message: InventoryState = {
       type: 'blort-inventory',
       hotbar: bags.hotbar.snapshot(),
       backpack: bags.backpack.snapshot(),
+      held: connections.get(socket)?.held ?? null,
     };
     return JSON.stringify(message);
+  }
+
+  function holdsGun({ bags }: Player, slot: number) {
+    return bags.hotbar.getSlot(slot)?.itemId === GUN_ITEM_ID;
   }
 
   function send(socket: InventorySocket, data: string) {
@@ -118,9 +132,23 @@ export function createInventoryRoom({
     }
   }
 
-  function publish(player: Player) {
-    const data = state(player);
-    for (const socket of player.sockets) send(socket, data);
+  /**
+   * Holsters the gun on every connection of player whose held slot was in
+   * touched, or no longer holds a gun, then sends each its state.
+   */
+  function publish(player: Player, touched: readonly SlotAddress[] = []) {
+    for (const socket of player.sockets) {
+      const connection = connections.get(socket);
+      const held = connection?.held;
+      if (
+        connection &&
+        held !== undefined &&
+        (touched.some(({ bag, index }) => bag === 'hotbar' && index === held) ||
+          !holdsGun(player, held))
+      )
+        connection.held = undefined;
+      send(socket, state(player, socket));
+    }
   }
 
   function write() {
@@ -211,10 +239,11 @@ export function createInventoryRoom({
 
       if (request.type === 'blort-inventory-hello') {
         detach(socket, connection);
+        connection.held = undefined;
         const player = playerFor(request.key);
         connection.key = request.key;
         player.sockets.add(socket);
-        send(socket, state(player));
+        send(socket, state(player, socket));
         return true;
       }
 
@@ -231,11 +260,19 @@ export function createInventoryRoom({
             to.index,
           )
         ) {
-          publish(player);
+          publish(player, [from, to]);
           scheduleSave(player);
         } else {
-          send(socket, state(player));
+          send(socket, state(player, socket));
         }
+        return true;
+      }
+
+      if (request.type === 'blort-inventory-equip') {
+        const { slot } = request;
+        connection.held =
+          slot !== null && holdsGun(player, slot) ? slot : undefined;
+        send(socket, state(player, socket));
         return true;
       }
 
@@ -250,6 +287,17 @@ export function createInventoryRoom({
         scheduleSave(player);
       }
       return true;
+    },
+
+    /** Whether this socket's player is holding a gun right now. */
+    isArmed(socket: InventorySocket): boolean {
+      const connection = connections.get(socket);
+      const player = connection?.key ? players.get(connection.key) : undefined;
+      return (
+        !!player &&
+        connection?.held !== undefined &&
+        holdsGun(player, connection.held)
+      );
     },
 
     /** Forget a socket once presence has closed it. */

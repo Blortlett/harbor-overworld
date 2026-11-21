@@ -78,7 +78,7 @@ test('moves before hello change nothing', () => {
   room.receive(ws, move('hotbar', 0, 'hotbar', 5));
   assert.equal(ws.sent.length, 0);
   room.receive(ws, hello(KEY_A));
-  assert.equal(ws.last.hotbar[0].itemId, 'lantern');
+  assert.equal(ws.last.hotbar[0].itemId, 'pistol');
   assert.equal(ws.last.hotbar[5], null);
 });
 
@@ -91,7 +91,7 @@ test('a move is applied and sent to every socket on the key', () => {
   room.receive(tab1, move('hotbar', 0, 'backpack', 23));
   for (const tab of [tab1, tab2]) {
     assert.equal(tab.last.hotbar[0], null);
-    assert.deepEqual(tab.last.backpack[23], { itemId: 'lantern', quantity: 1 });
+    assert.deepEqual(tab.last.backpack[23], { itemId: 'pistol', quantity: 1 });
   }
 });
 
@@ -116,7 +116,7 @@ test('keys cannot see or change each other', () => {
   const bSent = b.sent.length;
   room.receive(a, move('hotbar', 0, 'hotbar', 5));
   assert.equal(b.sent.length, bSent);
-  assert.equal(b.last.hotbar[0].itemId, 'lantern');
+  assert.equal(b.last.hotbar[0].itemId, 'pistol');
 });
 
 test('grant only works when allowed', () => {
@@ -146,10 +146,10 @@ test('messages past the rate limit are dropped', () => {
   room.receive(ws, move('hotbar', 0, 'hotbar', 5));
   room.receive(ws, move('hotbar', 5, 'hotbar', 0));
   room.receive(ws, move('hotbar', 0, 'hotbar', 4)); // 4th this second
-  assert.equal(ws.last.hotbar[0].itemId, 'lantern');
+  assert.equal(ws.last.hotbar[0].itemId, 'pistol');
   time = 1000;
   room.receive(ws, move('hotbar', 0, 'hotbar', 4));
-  assert.equal(ws.last.hotbar[4].itemId, 'lantern');
+  assert.equal(ws.last.hotbar[4].itemId, 'pistol');
 });
 
 test('inventories survive a restart through the save file', async (t) => {
@@ -169,7 +169,7 @@ test('inventories survive a restart through the save file', async (t) => {
   const again = socket();
   second.receive(again, hello(KEY_A));
   assert.equal(again.last.hotbar[0], null);
-  assert.deepEqual(again.last.backpack[20], { itemId: 'lantern', quantity: 1 });
+  assert.deepEqual(again.last.backpack[20], { itemId: 'pistol', quantity: 1 });
 });
 
 test('keys past the save cap work but are not saved', async (t) => {
@@ -196,5 +196,93 @@ test('a corrupt save file starts fresh instead of crashing', async (t) => {
   const room = createInventoryRoom({ file });
   const ws = socket();
   room.receive(ws, hello(KEY_A));
-  assert.equal(ws.last.hotbar[0].itemId, 'lantern');
+  assert.equal(ws.last.hotbar[0].itemId, 'pistol');
+});
+
+const equip = (slot) => ({ type: 'blort-inventory-equip', slot });
+
+test('the starter pistol is in hotbar slot 1 and starts holstered', () => {
+  const room = createInventoryRoom();
+  const ws = socket();
+  room.receive(ws, hello(KEY_A));
+  assert.equal(ws.last.hotbar[0].itemId, 'pistol');
+  assert.equal(ws.last.held, null);
+  assert.equal(room.isArmed(ws), false);
+});
+
+test('equip draws the gun and null holsters it', () => {
+  const room = createInventoryRoom();
+  const ws = socket();
+  room.receive(ws, hello(KEY_A));
+  room.receive(ws, equip(0));
+  assert.equal(ws.last.held, 0);
+  assert.equal(room.isArmed(ws), true);
+  room.receive(ws, equip(null));
+  assert.equal(ws.last.held, null);
+  assert.equal(room.isArmed(ws), false);
+});
+
+test('equip refuses slots without a gun and bad slots', () => {
+  const room = createInventoryRoom();
+  const ws = socket();
+  room.receive(ws, hello(KEY_A));
+  room.receive(ws, equip(1)); // rope
+  assert.equal(ws.last.held, null);
+  room.receive(ws, equip(5)); // empty
+  assert.equal(ws.last.held, null);
+  const sent = ws.sent.length;
+  room.receive(ws, equip(6)); // out of range
+  room.receive(ws, equip('0'));
+  assert.equal(ws.sent.length, sent);
+  assert.equal(room.isArmed(ws), false);
+});
+
+test('moving the held gun anywhere holsters it', () => {
+  const room = createInventoryRoom();
+  const ws = socket();
+  room.receive(ws, hello(KEY_A));
+  room.receive(ws, equip(0));
+  room.receive(ws, move('hotbar', 0, 'hotbar', 5));
+  assert.equal(ws.last.held, null);
+  assert.equal(room.isArmed(ws), false);
+
+  room.receive(ws, equip(5));
+  room.receive(ws, move('hotbar', 5, 'backpack', 23));
+  assert.equal(ws.last.held, null);
+  assert.equal(room.isArmed(ws), false);
+});
+
+test('moving something onto the held slot holsters it', () => {
+  const room = createInventoryRoom();
+  const ws = socket();
+  room.receive(ws, hello(KEY_A));
+  room.receive(ws, equip(0));
+  room.receive(ws, move('hotbar', 1, 'hotbar', 0)); // rope swaps in
+  assert.equal(ws.last.hotbar[1].itemId, 'pistol');
+  assert.equal(ws.last.held, null);
+  assert.equal(room.isArmed(ws), false);
+});
+
+test('moves that miss the held slot keep the gun drawn', () => {
+  const room = createInventoryRoom();
+  const ws = socket();
+  room.receive(ws, hello(KEY_A));
+  room.receive(ws, equip(0));
+  room.receive(ws, move('hotbar', 1, 'hotbar', 4));
+  assert.equal(ws.last.held, 0);
+  assert.equal(room.isArmed(ws), true);
+});
+
+test('each tab holds its own gun, and a move in one holsters the other', () => {
+  const room = createInventoryRoom();
+  const tab1 = socket();
+  const tab2 = socket();
+  room.receive(tab1, hello(KEY_A));
+  room.receive(tab2, hello(KEY_A));
+  room.receive(tab1, equip(0));
+  assert.equal(room.isArmed(tab1), true);
+  assert.equal(room.isArmed(tab2), false);
+  room.receive(tab2, move('hotbar', 0, 'hotbar', 3));
+  assert.equal(room.isArmed(tab1), false);
+  assert.equal(tab1.last.held, null);
 });

@@ -34,7 +34,17 @@ export const ITEM_LIST: readonly ItemDefinition[] = [
     icon: '🏮',
     maxStack: 1,
   },
+  {
+    id: 'pistol',
+    name: 'Pistol',
+    description: 'Press its hotbar key to draw or holster it.',
+    icon: '🔫',
+    maxStack: 1,
+  },
 ];
+
+/** Items that put the gun in the player's hand while held. */
+export const GUN_ITEM_ID = 'pistol';
 
 export const ITEMS: ReadonlyMap<string, ItemDefinition> = new Map(
   ITEM_LIST.map((item) => [item.id, item]),

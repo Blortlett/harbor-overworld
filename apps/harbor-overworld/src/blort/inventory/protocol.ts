@@ -27,12 +27,23 @@ export type InventoryGrant = {
   itemId: string;
   quantity: number;
 };
-export type InventoryRequest = InventoryHello | InventoryMove | InventoryGrant;
+/** Draw the gun in a hotbar slot, or holster it with null. */
+export type InventoryEquip = {
+  type: 'blort-inventory-equip';
+  slot: number | null;
+};
+export type InventoryRequest =
+  | InventoryHello
+  | InventoryMove
+  | InventoryGrant
+  | InventoryEquip;
 
 export type InventoryState = {
   type: 'blort-inventory';
   hotbar: Slot[];
   backpack: Slot[];
+  /** The hotbar slot this connection is holding, if any. */
+  held: number | null;
 };
 
 export const PLAYER_KEY_PATTERN = /^[a-f0-9]{32}$/;
@@ -86,6 +97,14 @@ export function readRequest(value: unknown): InventoryRequest | undefined {
         value.quantity <= MAX_GRANT
         ? { type: value.type, itemId: value.itemId, quantity: value.quantity }
         : undefined;
+    case 'blort-inventory-equip':
+      return value.slot === null ||
+        (typeof value.slot === 'number' &&
+          Number.isInteger(value.slot) &&
+          value.slot >= 0 &&
+          value.slot < HOTBAR_SLOTS)
+        ? { type: value.type, slot: value.slot }
+        : undefined;
     default:
       return undefined;
   }
@@ -118,10 +137,17 @@ export function readSlots(value: unknown, size: number): Slot[] | undefined {
 /** Validates the server's state message in the browser. */
 export function readState(
   value: unknown,
-): { hotbar: Slot[]; backpack: Slot[] } | undefined {
+): { hotbar: Slot[]; backpack: Slot[]; held: number | null } | undefined {
   if (!isInventoryMessage(value) || value.type !== 'blort-inventory')
     return undefined;
   const hotbar = readSlots(value.hotbar, HOTBAR_SLOTS);
   const backpack = readSlots(value.backpack, BACKPACK_SLOTS);
-  return hotbar && backpack ? { hotbar, backpack } : undefined;
+  const held =
+    typeof value.held === 'number' &&
+    Number.isInteger(value.held) &&
+    value.held >= 0 &&
+    value.held < HOTBAR_SLOTS
+      ? value.held
+      : null;
+  return hotbar && backpack ? { hotbar, backpack, held } : undefined;
 }

@@ -620,10 +620,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           avatar.walking ? Math.sin(time * 14 + avatar.id) * 0.18 : 0,
         );
         mesh(model.buffer, model.count, avatarAttributes);
-        if (avatar.king) {
-          mesh(crown.buffer, crown.count, avatarAttributes);
+        if (avatar.king) mesh(crown.buffer, crown.count, avatarAttributes);
+        if (avatar.king || avatar.armed)
           mesh(heldGun.buffer, heldGun.count, avatarAttributes);
-        }
       }
       for (const attr of avatarAttributes) gl.disableVertexAttribArray(attr);
 

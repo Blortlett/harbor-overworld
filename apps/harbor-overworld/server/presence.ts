@@ -141,8 +141,16 @@ export function attachPresence(
   );
 
   function playersWithPoses(): Player[] {
-    return [...clients.values()].flatMap(({ id, pose }) =>
-      pose ? [{ id, ...pose }] : [],
+    return [...clients.values()].flatMap(({ id, pose, ws }) =>
+      pose
+        ? [
+            {
+              id,
+              ...pose,
+              ...(inventory.isArmed(ws) && { armed: true as const }),
+            },
+          ]
+        : [],
     );
   }
 
@@ -155,14 +163,16 @@ export function attachPresence(
 
   function shoot(client: Client, aim: Shoot, now: number) {
     const state = crown.state;
+    const king =
+      'holder' in state && state.holder === client.id && now < state.expiresAt;
     if (
       !client.pose ||
-      !('holder' in state) ||
-      state.holder !== client.id ||
-      now >= state.expiresAt ||
+      !(king || inventory.isArmed(client.ws)) ||
       now < client.nextShot
     )
       return;
+    // Only the King shoots from a giant's height.
+    if (!king) aim = { ...aim, kingScale: 1 };
     client.nextShot = now + SHOT_INTERVAL;
     shotObstacles ??= makeTerrain().obstacles;
     const players = playersWithPoses();

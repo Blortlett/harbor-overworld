@@ -11,7 +11,12 @@ import {
   type SlotAddress,
 } from './protocol.ts';
 
-export type InventorySnapshot = { hotbar: Slot[]; backpack: Slot[] };
+export type InventorySnapshot = {
+  hotbar: Slot[];
+  backpack: Slot[];
+  /** Hotbar slot whose gun this tab is holding. */
+  held: number | null;
+};
 
 const KEY_STORAGE = 'blort.inventory.player-key';
 
@@ -79,6 +84,11 @@ function createInventoryLink() {
 
     move(from: SlotAddress, to: SlotAddress) {
       return send({ type: 'blort-inventory-move', from, to });
+    },
+
+    /** Draws the gun in a hotbar slot, or holsters it with null. */
+    equip(slot: number | null) {
+      return send({ type: 'blort-inventory-equip', slot });
     },
 
     /** Playground only: the server ignores this anywhere else. */

@@ -563,6 +563,72 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   );
 
   await t.test(
+    'a drawn pistol lets anyone shoot until it is moved',
+    async (t) => {
+      const gunner = connect(t);
+      const { id } = await gunner.until((m) => m.type === 'welcome');
+      gunner.send({ type: 'blort-inventory-hello', key: 'c'.repeat(32) });
+      const kit = await gunner.until((m) => m.type === 'blort-inventory');
+      assert.equal(kit.hotbar[0].itemId, 'pistol');
+      assert.equal(kit.held, null);
+      const pose = { x: 0.5, y: 40, z: 30.5, yaw: 0 };
+      gunner.send(pose);
+      await gunner.until((m) =>
+        m.players?.some((p) => p.id === id && p.y === pose.y && !p.armed),
+      );
+      // A kingScale the shooter hasn't earned is ignored.
+      const aim = { type: 'shoot', yaw: 0, pitch: 0, kingScale: 5 };
+      gunner.send(aim);
+      await sleep(150);
+      assert.equal(
+        gunner.received.some((m) => m.type === 'gunshot' && m.shooter === id),
+        false,
+      );
+
+      gunner.send({ type: 'blort-inventory-equip', slot: 0 });
+      assert.equal(
+        (
+          await gunner.until(
+            (m) => m.type === 'blort-inventory' && m.held === 0,
+          )
+        ).held,
+        0,
+      );
+      await b.until((m) => m.players?.some((p) => p.id === id && p.armed));
+      gunner.send(aim);
+      const shot = await b.until(
+        (m) => m.type === 'gunshot' && m.shooter === id,
+      );
+      // The muzzle sits at normal arm's reach, not a King's.
+      assert.ok(Math.abs(shot.path.start[1] - (pose.y + 0.81)) < 0.01);
+
+      gunner.send({
+        type: 'blort-inventory-move',
+        from: { bag: 'hotbar', index: 0 },
+        to: { bag: 'backpack', index: 23 },
+      });
+      await gunner.until(
+        (m) =>
+          m.type === 'blort-inventory' && m.backpack[23] && m.held === null,
+      );
+      await b.until((m) =>
+        m.players?.some((p) => p.id === id && p.armed === undefined),
+      );
+      const before = b.received.length;
+      await sleep(500);
+      gunner.send(aim);
+      await sleep(150);
+      assert.equal(
+        b.received
+          .slice(before)
+          .some((m) => m.type === 'gunshot' && m.shooter === id),
+        false,
+      );
+      await gunner.close();
+    },
+  );
+
+  await t.test(
     'broadcasts paper impacts and replays them for late joiners',
     async (t) => {
       const king = connect(t);
