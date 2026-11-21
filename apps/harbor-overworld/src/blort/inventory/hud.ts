@@ -1,9 +1,11 @@
-// The hotbar (always visible in the world) and the backpack panel (Tab).
+// The hotbar (always visible in the world) and the backpack panel (Tab),
+// which also shows an open chest above the backpack.
 // Kept apart from the game's own HUD: it reads game state from the DOM
 // (#overworld.entered, open dialogs, pointer lock) instead of importing it.
 
 import type { Inventory } from './inventory.ts';
 import { getItem } from './items.ts';
+import type { ContainerKind } from '../loot/containers.ts';
 import type { Bag, SlotAddress } from './protocol.ts';
 import './inventory.css';
 
@@ -12,11 +14,15 @@ type HudOptions = {
   world: HTMLCanvasElement;
   hotbar: Inventory;
   backpack: Inventory;
+  /** Mirrors whichever chest is open. Shown only while one is. */
+  container: Inventory;
   backpackColumns: number;
   /** Asks for a stack to move. The inventories update when the server replies. */
   onMove: (from: SlotAddress, to: SlotAddress) => void;
   /** A hotbar number key was pressed, after its slot is selected. */
   onHotbarKey?: (index: number) => void;
+  /** The panel closed while a chest was showing. */
+  onCloseContainer?: () => void;
 };
 
 type SlotRef = { inventory: Inventory; bag: Bag; index: number };
@@ -50,9 +56,11 @@ export function mountInventoryHud({
   world,
   hotbar,
   backpack,
+  container,
   backpackColumns,
   onMove,
   onHotbarKey,
+  onCloseContainer,
 }: HudOptions) {
   const root = document.createElement('div');
   root.className = 'blort-inventory';
@@ -72,11 +80,31 @@ export function mountInventoryHud({
   const grid = document.createElement('div');
   grid.className = 'blort-grid';
   grid.style.setProperty('--blort-columns', String(backpackColumns));
-  panel.append(heading, grid);
+
+  const chest = document.createElement('div');
+  chest.className = 'blort-chest';
+  chest.hidden = true;
+  const chestHeading = document.createElement('header');
+  chestHeading.className = 'blort-heading';
+  const chestTitle = document.createElement('span');
+  const chestHint = document.createElement('span');
+  chestHint.className = 'blort-hint';
+  chestHeading.append(chestTitle, chestHint);
+  const chestGrid = document.createElement('div');
+  chestGrid.className = 'blort-grid';
+  chestGrid.style.setProperty('--blort-columns', String(backpackColumns));
+  chest.append(chestHeading, chestGrid);
+
+  panel.append(chest, heading, grid);
 
   const bar = document.createElement('div');
   bar.className = 'blort-hotbar plate';
   bar.setAttribute('aria-label', 'Hotbar');
+
+  const prompt = document.createElement('p');
+  prompt.className = 'blort-prompt plate';
+  prompt.setAttribute('role', 'status');
+  prompt.hidden = true;
 
   const offlineLabel = document.createElement('p');
   offlineLabel.className = 'blort-offline';
@@ -87,7 +115,15 @@ export function mountInventoryHud({
   ghost.className = 'blort-ghost';
   ghost.hidden = true;
 
-  root.append(panel, offlineLabel, bar);
+  root.append(panel, prompt, offlineLabel, bar);
+
+  /** "Press E to interact", above the hotbar. */
+  const promptKey = document.createElement('kbd');
+  promptKey.textContent = 'E';
+  prompt.replaceChildren('Press', promptKey, 'to interact');
+  function setPrompt(visible: boolean) {
+    prompt.hidden = !visible;
+  }
   game.append(backdrop, root, ghost);
 
   const slotElements = new Map<Inventory, HTMLButtonElement[]>();
@@ -156,6 +192,7 @@ export function mountInventoryHud({
     );
   }
 
+  buildSlots(container, 'container', chestGrid, false);
   buildSlots(backpack, 'backpack', grid, false);
   buildSlots(hotbar, 'hotbar', bar, true);
 
@@ -188,6 +225,18 @@ export function mountInventoryHud({
   }
   select(0);
 
+  // The open chest, if any. Loot chests only give, so they take no drops.
+  let containerKind: ContainerKind | null = null;
+  function setContainer(kind: ContainerKind | null) {
+    containerKind = kind;
+    chest.hidden = !kind;
+    chest.classList.toggle('take-only', kind === 'loot');
+    chestTitle.textContent = kind === 'loot' ? 'LOOT CHEST' : 'CHEST';
+    chestHint.innerHTML =
+      kind === 'loot' ? 'Take only · <kbd>E</kbd> Close' : '<kbd>E</kbd> Close';
+    panel.setAttribute('aria-label', kind ? 'Chest and backpack' : 'Backpack');
+  }
+
   // Backpack panel
   let open = false;
   let relock = false;
@@ -210,6 +259,10 @@ export function mountInventoryHud({
       if (relock) document.exitPointerLock();
     } else {
       cancelDrag();
+      if (containerKind) {
+        setContainer(null);
+        onCloseContainer?.();
+      }
       if (
         document.activeElement instanceof HTMLElement &&
         root.contains(document.activeElement)
@@ -243,6 +296,12 @@ export function mountInventoryHud({
         if (blockedByGame()) return;
         event.preventDefault();
         if (!event.repeat) setOpen(!open);
+        return;
+      }
+      if (open && containerKind && event.code === 'KeyE') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.repeat) setOpen(false);
         return;
       }
       if (open && event.code === 'Escape') {
@@ -322,6 +381,7 @@ export function mountInventoryHud({
       .elementFromPoint(event.clientX, event.clientY)
       ?.closest('.blort-slot');
     const target = element && slotRefs.get(element);
+    if (target?.bag === 'container' && containerKind === 'loot') return;
     if (target && (target.bag !== bag || target.index !== index))
       onMove({ bag, index }, { bag: target.bag, index: target.index });
   });
@@ -334,6 +394,12 @@ export function mountInventoryHud({
       return open;
     },
     setOpen,
+    setContainer,
+    setPrompt,
+    blockedByGame,
+    get containerKind() {
+      return containerKind;
+    },
     select,
     setHeld,
     setOnline,

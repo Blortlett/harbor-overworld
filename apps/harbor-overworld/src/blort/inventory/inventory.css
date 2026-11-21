@@ -53,6 +53,21 @@
 .blort-grid {
   grid-template-columns: repeat(var(--blort-columns, 6), var(--blort-slot));
 }
+.blort-chest {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+#overworld .blort-chest[hidden] {
+  display: none;
+}
+.blort-chest .blort-heading > span:first-child {
+  color: var(--gold);
+}
+.blort-inventory.open .blort-chest.take-only .blort-slot:not(.filled):hover {
+  border-color: var(--line);
+  background: #e2d6a30f;
+}
 .blort-heading {
   display: flex;
   justify-content: space-between;
@@ -129,6 +144,20 @@
   font-size: 12px;
   font-weight: 700;
   text-shadow: 0 1px 2px #000;
+}
+
+.blort-prompt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 5px 11px;
+  color: var(--ink);
+  font-size: 13px;
+}
+#overworld .blort-prompt[hidden],
+.blort-inventory.open .blort-prompt {
+  display: none;
 }
 
 .blort-offline {

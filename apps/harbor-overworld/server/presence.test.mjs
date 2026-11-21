@@ -66,6 +66,8 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
   const plots = join(dir, 'plots.json');
   const fixture = join(dir, 'fixture.mjs');
   const preload = join(dir, 'preload.mjs');
+  // Players start empty, so the pistol test's player owns one in advance.
+  const inventories = join(dir, 'inventories.json');
   const otherKey = keyPair();
   const authorKey = keyPair();
   let stopServer;
@@ -102,6 +104,18 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
     ),
     writeFile(clock, String(resetTime - 1)),
     writeFile(
+      inventories,
+      JSON.stringify({
+        version: 1,
+        players: {
+          ['c'.repeat(32)]: {
+            hotbar: [{ itemId: 'pistol', quantity: 1 }, ...Array(5).fill(null)],
+            backpack: Array(24).fill(null),
+          },
+        },
+      }),
+    ),
+    writeFile(
       preload,
       `import { mockHarbor } from './fixture.mjs';\nmockHarbor(...${JSON.stringify([clock, authorKey.key])});\n`,
     ),
@@ -117,6 +131,7 @@ test('standalone Overworld bundle', { timeout: 20000 }, async (t) => {
           ...process.env,
           OVERWORLD_PLOTS_FILE: plotsFile,
           OVERWORLD_FEED_BASE_URLS: feedBaseUrls,
+          BLORT_INVENTORY_FILE: inventories,
         },
         stdio: ['ignore', 'pipe', 'inherit'],
       },

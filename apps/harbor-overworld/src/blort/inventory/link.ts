@@ -4,10 +4,13 @@
 
 import type { Slot } from './inventory.ts';
 import {
+  type ContainerPlacement,
   type InventoryRequest,
+  type OpenContainer,
   isInventoryMessage,
   PLAYER_KEY_PATTERN,
   readState,
+  readWorld,
   type SlotAddress,
 } from './protocol.ts';
 
@@ -16,6 +19,8 @@ export type InventorySnapshot = {
   backpack: Slot[];
   /** Hotbar slot whose gun this tab is holding. */
   held: number | null;
+  /** The chest this tab has open, if any. */
+  container: OpenContainer | null;
 };
 
 const KEY_STORAGE = 'blort.inventory.player-key';
@@ -39,6 +44,7 @@ function createInventoryLink() {
   let key: string | undefined;
   let online = false;
   const stateListeners = new Set<(state: InventorySnapshot) => void>();
+  const worldListeners = new Set<(containers: ContainerPlacement[]) => void>();
   const onlineListeners = new Set<(online: boolean) => void>();
 
   function setOnline(next: boolean) {
@@ -69,6 +75,9 @@ function createInventoryLink() {
         setOnline(true);
         for (const listener of stateListeners) listener(state);
       }
+      const containers = readWorld(message);
+      if (containers)
+        for (const listener of worldListeners) listener(containers);
       return true;
     },
 
@@ -91,6 +100,11 @@ function createInventoryLink() {
       return send({ type: 'blort-inventory-equip', slot });
     },
 
+    /** Opens a chest in reach, or closes the open one with null. */
+    open(container: string | null) {
+      return send({ type: 'blort-inventory-open', container });
+    },
+
     /** Playground only: the server ignores this anywhere else. */
     grant(itemId: string, quantity = 1) {
       return send({ type: 'blort-inventory-grant', itemId, quantity });
@@ -99,6 +113,12 @@ function createInventoryLink() {
     onState(listener: (state: InventorySnapshot) => void) {
       stateListeners.add(listener);
       return () => stateListeners.delete(listener);
+    },
+
+    /** Every container in the world, whenever one changes. */
+    onWorld(listener: (containers: ContainerPlacement[]) => void) {
+      worldListeners.add(listener);
+      return () => worldListeners.delete(listener);
     },
 
     onOnline(listener: (online: boolean) => void) {

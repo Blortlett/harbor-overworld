@@ -13,6 +13,7 @@
     "control": "node scripts/control.mjs",
     "test:movement": "node --test src/world/movement.test.mjs",
     "test:inventory": "node --test src/blort/inventory/inventory.test.mjs",
+    "test:loot": "node --test src/blort/loot/tables.test.mjs",
     "test:inventory-server": "node --test src/blort/server/inventory-room.test.mjs",
     "test:presence": "pnpm run build:presence && node --test server/presence.test.mjs"
   },

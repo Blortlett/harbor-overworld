@@ -111,7 +111,11 @@ export function attachPresence(
   const crown = createCrown(practice ? PRACTICE_CROWN_SITES : undefined);
   let shotObstacles: readonly Obstacle[] | undefined;
   let practiceTargetIndex = 0;
-  const inventory = inventoryRoomForPresence(plotsFile, practice);
+  const inventory = inventoryRoomForPresence(
+    plotsFile,
+    practice,
+    (socket) => [...clients.values()].find(({ ws }) => ws === socket)?.pose,
+  );
 
   function practiceTarget(): Player {
     const { x, z } = PRACTICE_TARGET_SITES[practiceTargetIndex];

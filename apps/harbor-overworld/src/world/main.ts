@@ -19,7 +19,7 @@ import { shouldRejoinWorld, watchWorldUpdates } from './build';
 import { bindIdentityDialog } from './connect';
 import { createControls, POINTER_DEGREES } from './controls';
 import { createCrown } from './crown';
-import { isArmed } from './held-item';
+import { currentProps, isArmed, setPlayerPose } from './bridge';
 import { createWorldAudio } from './world-audio';
 import { createLandShark, type SharkPose } from './land-shark';
 import { bindMobileControls } from './mobile';
@@ -1692,6 +1692,11 @@ function start() {
       if (avatar.name && avatar.name === avatarName)
         avatar.name = `${avatar.name} · #${avatar.id}`;
     }
+    setPlayerPose(
+      entered && !boat.aboard && !plane.aboard
+        ? { x: view.x, y: view.y - EYE_HEIGHT, z: view.z, yaw: view.yaw }
+        : undefined,
+    );
     renderer.draw(
       camera,
       seconds,
@@ -1703,6 +1708,7 @@ function start() {
       plane.pose,
       shark,
       shotEffects,
+      currentProps(),
     );
     drawHud(avatars, shark);
   }

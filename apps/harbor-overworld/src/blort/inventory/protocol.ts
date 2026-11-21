@@ -2,6 +2,7 @@
 // with "blort-inventory" so it can't collide with presence's own messages.
 // Shared by the browser (link.ts) and the server (inventory-room.ts).
 
+import { CONTAINER_SLOTS, type ContainerKind } from '../loot/containers.ts';
 import type { Slot } from './inventory.ts';
 import { ITEMS } from './items.ts';
 
@@ -10,7 +11,12 @@ export const BACKPACK_COLUMNS = 6;
 export const BACKPACK_ROWS = 4;
 export const BACKPACK_SLOTS = BACKPACK_COLUMNS * BACKPACK_ROWS;
 
-export const BAG_SIZES = { hotbar: HOTBAR_SLOTS, backpack: BACKPACK_SLOTS };
+/** "container" is whichever shared inventory this connection has open. */
+export const BAG_SIZES = {
+  hotbar: HOTBAR_SLOTS,
+  backpack: BACKPACK_SLOTS,
+  container: CONTAINER_SLOTS,
+};
 export type Bag = keyof typeof BAG_SIZES;
 export type SlotAddress = { bag: Bag; index: number };
 
@@ -32,11 +38,36 @@ export type InventoryEquip = {
   type: 'blort-inventory-equip';
   slot: number | null;
 };
+/** Open a shared inventory in reach, or close whichever is open with null. */
+export type InventoryOpen = {
+  type: 'blort-inventory-open';
+  container: string | null;
+};
 export type InventoryRequest =
   | InventoryHello
   | InventoryMove
   | InventoryGrant
-  | InventoryEquip;
+  | InventoryEquip
+  | InventoryOpen;
+
+/** The shared inventory a connection has open. */
+export type OpenContainer = { id: string; kind: ContainerKind; slots: Slot[] };
+
+/** Every container in the world, sent to everyone. */
+export type ContainerPlacement = {
+  id: string;
+  kind: ContainerKind;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  /** Someone is looking inside, so the lid is up. */
+  open: boolean;
+};
+export type InventoryWorld = {
+  type: 'blort-inventory-world';
+  containers: ContainerPlacement[];
+};
 
 export type InventoryState = {
   type: 'blort-inventory';
@@ -44,6 +75,7 @@ export type InventoryState = {
   backpack: Slot[];
   /** The hotbar slot this connection is holding, if any. */
   held: number | null;
+  container: OpenContainer | null;
 };
 
 export const PLAYER_KEY_PATTERN = /^[a-f0-9]{32}$/;
@@ -68,7 +100,7 @@ function isAddress(value: unknown): value is SlotAddress {
   if (!isObject(value)) return false;
   const { bag, index } = value;
   return (
-    (bag === 'hotbar' || bag === 'backpack') &&
+    (bag === 'hotbar' || bag === 'backpack' || bag === 'container') &&
     typeof index === 'number' &&
     Number.isInteger(index) &&
     index >= 0 &&
@@ -105,6 +137,11 @@ export function readRequest(value: unknown): InventoryRequest | undefined {
           value.slot < HOTBAR_SLOTS)
         ? { type: value.type, slot: value.slot }
         : undefined;
+    case 'blort-inventory-open':
+      return value.container === null ||
+        (typeof value.container === 'string' && value.container.length <= 64)
+        ? { type: value.type, container: value.container }
+        : undefined;
     default:
       return undefined;
   }
@@ -135,9 +172,25 @@ export function readSlots(value: unknown, size: number): Slot[] | undefined {
 }
 
 /** Validates the server's state message in the browser. */
-export function readState(
-  value: unknown,
-): { hotbar: Slot[]; backpack: Slot[]; held: number | null } | undefined {
+function readOpenContainer(value: unknown): OpenContainer | null {
+  if (!isObject(value)) return null;
+  const { id, kind } = value;
+  const slots = readSlots(value.slots, CONTAINER_SLOTS);
+  return typeof id === 'string' &&
+    (kind === 'chest' || kind === 'loot') &&
+    slots
+    ? { id, kind, slots }
+    : null;
+}
+
+export function readState(value: unknown):
+  | {
+      hotbar: Slot[];
+      backpack: Slot[];
+      held: number | null;
+      container: OpenContainer | null;
+    }
+  | undefined {
   if (!isInventoryMessage(value) || value.type !== 'blort-inventory')
     return undefined;
   const hotbar = readSlots(value.hotbar, HOTBAR_SLOTS);
@@ -149,5 +202,32 @@ export function readState(
     value.held < HOTBAR_SLOTS
       ? value.held
       : null;
-  return hotbar && backpack ? { hotbar, backpack, held } : undefined;
+  const container = readOpenContainer(value.container);
+  return hotbar && backpack ? { hotbar, backpack, held, container } : undefined;
+}
+
+const finite = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+/** Validates the server's container list in the browser. */
+export function readWorld(value: unknown): ContainerPlacement[] | undefined {
+  if (
+    !isInventoryMessage(value) ||
+    value.type !== 'blort-inventory-world' ||
+    !Array.isArray(value.containers)
+  )
+    return undefined;
+  return value.containers.flatMap((entry: unknown) => {
+    if (!isObject(entry)) return [];
+    const { id, kind, x, y, z, yaw, open } = entry;
+    return typeof id === 'string' &&
+      (kind === 'chest' || kind === 'loot') &&
+      finite(x) &&
+      finite(y) &&
+      finite(z) &&
+      finite(yaw) &&
+      typeof open === 'boolean'
+      ? [{ id, kind, x, y, z, yaw, open }]
+      : [];
+  });
 }
