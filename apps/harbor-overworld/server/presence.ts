@@ -38,6 +38,7 @@ import {
   VEHICLE_BERTHS,
   VEHICLE_KINDS,
 } from '../src/world/vehicles.ts';
+import { inventoryRoomForPresence } from '../src/blort/server/inventory-room.ts';
 import { createPlots, type PlotFeed } from './plots.ts';
 import { traceShot } from '../src/world/shot-trace.ts';
 
@@ -110,6 +111,7 @@ export function attachPresence(
   const crown = createCrown(practice ? PRACTICE_CROWN_SITES : undefined);
   let shotObstacles: readonly Obstacle[] | undefined;
   let practiceTargetIndex = 0;
+  const inventory = inventoryRoomForPresence(plotsFile, practice);
 
   function practiceTarget(): Player {
     const { x, z } = PRACTICE_TARGET_SITES[practiceTargetIndex];
@@ -276,6 +278,7 @@ export function attachPresence(
       if (previous) previous.ws.close(4001, 'Connection replaced');
       ws.on('error', () => ws.terminate());
       ws.on('close', (code) => {
+        inventory.disconnect(ws);
         if (clients.get(session) !== client) return;
         clients.delete(session);
         releaseVehicles(client.id);
@@ -287,6 +290,7 @@ export function attachPresence(
         if (binary || clients.get(session) !== client) return;
         const now = performance.now();
         const message = parseMessage(data.toString());
+        if (inventory.receive(ws, message)) return;
         if (isShoot(message)) {
           shoot(client, message, now);
           return;
@@ -453,6 +457,7 @@ export function attachPresence(
   http.once('close', () => {
     clearInterval(timer);
     plots.close();
+    void inventory.close();
     http.off('upgrade', upgrade);
     for (const { ws } of clients.values()) ws.terminate();
     clients.clear();

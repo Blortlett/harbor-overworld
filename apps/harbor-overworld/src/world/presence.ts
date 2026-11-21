@@ -33,6 +33,7 @@ import {
   type VehicleKind,
   type VehicleReport,
 } from './vehicles';
+import { inventoryLink } from '../blort/inventory/link';
 
 export type Avatar = NamedPose & { id: number; walking: boolean; king?: true };
 export type LocalCrown =
@@ -221,6 +222,7 @@ export function createPresence(
     connection.addEventListener('message', ({ data }) => {
       if (socket !== connection || typeof data !== 'string') return;
       const message = parseMessage(data);
+      if (inventoryLink.receive(message)) return;
       if (!message || typeof message !== 'object' || !('type' in message))
         return;
 
@@ -240,6 +242,7 @@ export function createPresence(
         )
           onJoin(message.slot);
         available = true;
+        inventoryLink.attach(connection);
         status('1 player online');
         sendPose(connection);
         sendTimer = window.setInterval(
@@ -505,6 +508,7 @@ export function createPresence(
   }
 
   function reset(preserveCrown = false) {
+    inventoryLink.detach();
     socket = undefined;
     id = undefined;
     spawnRevision = 0;

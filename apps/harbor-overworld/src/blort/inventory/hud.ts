@@ -2,8 +2,9 @@
 // Kept apart from the game's own HUD: it reads game state from the DOM
 // (#overworld.entered, open dialogs, pointer lock) instead of importing it.
 
-import { type Inventory, moveSlot } from './inventory.ts';
+import type { Inventory } from './inventory.ts';
 import { getItem } from './items.ts';
+import type { Bag, SlotAddress } from './protocol.ts';
 import './inventory.css';
 
 type HudOptions = {
@@ -12,9 +13,11 @@ type HudOptions = {
   hotbar: Inventory;
   backpack: Inventory;
   backpackColumns: number;
+  /** Asks for a stack to move. The inventories update when the server replies. */
+  onMove: (from: SlotAddress, to: SlotAddress) => void;
 };
 
-type SlotRef = { inventory: Inventory; index: number };
+type SlotRef = { inventory: Inventory; bag: Bag; index: number };
 
 /** Keys the game reads that should do nothing while the backpack is open. */
 const BLOCKED_WHILE_OPEN = new Set([
@@ -46,6 +49,7 @@ export function mountInventoryHud({
   hotbar,
   backpack,
   backpackColumns,
+  onMove,
 }: HudOptions) {
   const root = document.createElement('div');
   root.className = 'blort-inventory';
@@ -71,11 +75,16 @@ export function mountInventoryHud({
   bar.className = 'blort-hotbar plate';
   bar.setAttribute('aria-label', 'Hotbar');
 
+  const offlineLabel = document.createElement('p');
+  offlineLabel.className = 'blort-offline';
+  offlineLabel.setAttribute('role', 'status');
+  offlineLabel.textContent = 'Inventory offline';
+
   const ghost = document.createElement('div');
   ghost.className = 'blort-ghost';
   ghost.hidden = true;
 
-  root.append(panel, bar);
+  root.append(panel, offlineLabel, bar);
   game.append(backdrop, root, ghost);
 
   const slotElements = new Map<Inventory, HTMLButtonElement[]>();
@@ -83,6 +92,7 @@ export function mountInventoryHud({
 
   function buildSlots(
     inventory: Inventory,
+    bag: Bag,
     parent: HTMLElement,
     numbered: boolean,
   ) {
@@ -92,7 +102,7 @@ export function mountInventoryHud({
       slot.className = 'blort-slot';
       slot.tabIndex = -1;
       if (numbered) slot.dataset.key = String(index + 1);
-      slotRefs.set(slot, { inventory, index });
+      slotRefs.set(slot, { inventory, bag, index });
       parent.append(slot);
       return slot;
     });
@@ -143,8 +153,18 @@ export function mountInventoryHud({
     );
   }
 
-  buildSlots(backpack, grid, false);
-  buildSlots(hotbar, bar, true);
+  buildSlots(backpack, 'backpack', grid, false);
+  buildSlots(hotbar, 'hotbar', bar, true);
+
+  // Offline until the server's state arrives. Slots keep their last known
+  // contents, dimmed, and can't be dragged.
+  let online = false;
+  root.classList.add('offline');
+  function setOnline(next: boolean) {
+    online = next;
+    root.classList.toggle('offline', !online);
+    if (!online) cancelDrag();
+  }
 
   // Hotbar selection (1–6). Nothing uses the selected item yet.
   let selected = 0;
@@ -261,7 +281,7 @@ export function mountInventoryHud({
   }
 
   root.addEventListener('pointerdown', (event) => {
-    if (!open || event.button !== 0 || drag) return;
+    if (!open || !online || event.button !== 0 || drag) return;
     const element = (event.target as Element).closest('.blort-slot');
     const ref = element && slotRefs.get(element);
     if (!ref) return;
@@ -283,13 +303,14 @@ export function mountInventoryHud({
 
   window.addEventListener('pointerup', (event) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    const { inventory, index } = drag;
+    const { bag, index } = drag;
     cancelDrag();
     const element = document
       .elementFromPoint(event.clientX, event.clientY)
       ?.closest('.blort-slot');
     const target = element && slotRefs.get(element);
-    if (target) moveSlot(inventory, index, target.inventory, target.index);
+    if (target && (target.bag !== bag || target.index !== index))
+      onMove({ bag, index }, { bag: target.bag, index: target.index });
   });
 
   window.addEventListener('pointercancel', cancelDrag);
@@ -301,5 +322,6 @@ export function mountInventoryHud({
     },
     setOpen,
     select,
+    setOnline,
   };
 }

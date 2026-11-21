@@ -65,6 +65,30 @@ export class Inventory {
     return true;
   }
 
+  /** Copies of every slot, in order. */
+  snapshot(): Slot[] {
+    return this.slots.map((slot) => (slot ? { ...slot } : null));
+  }
+
+  /**
+   * Replaces every slot, e.g. with state from the server. Only slots whose
+   * contents differ are announced. Extra entries are ignored, missing ones
+   * become empty.
+   */
+  replaceAll(slots: readonly Slot[]) {
+    for (let i = 0; i < this.size; i++) {
+      const next = slots[i] ?? null;
+      const current = this.slots[i];
+      if (
+        current?.itemId === next?.itemId &&
+        current?.quantity === next?.quantity
+      )
+        continue;
+      this.slots[i] = next ? { ...next } : null;
+      this.emit(i);
+    }
+  }
+
   getItemCount(itemId: string): number {
     let count = 0;
     for (const slot of this.slots)

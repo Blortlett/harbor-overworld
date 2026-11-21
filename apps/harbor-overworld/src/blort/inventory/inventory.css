@@ -128,6 +128,26 @@
   text-shadow: 0 1px 2px #000;
 }
 
+.blort-offline {
+  display: none;
+  margin: 0;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: var(--plate);
+  color: var(--soft);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.blort-inventory.offline .blort-offline {
+  display: block;
+}
+.blort-inventory.offline .blort-slot {
+  opacity: 0.45;
+}
+.blort-inventory.offline .blort-slot.filled {
+  cursor: not-allowed;
+}
+
 .blort-ghost {
   position: fixed;
   top: 0;
